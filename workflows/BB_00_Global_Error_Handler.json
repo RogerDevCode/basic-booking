@@ -1,0 +1,120 @@
+{
+  "name": "BB_00_Global_Error_Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "err_trig",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nfunction redact(val) {\n    if (!val) return val;\n    const str = String(val);\n    if (str.length <= 4) return \"***\";\n    return str.substring(0, 2) + \"***\" + str.substring(str.length - 2);\n}\n\nfunction processNode(node) {\n    if (typeof node !== 'object' || node === null) return node;\n    const sensitive = ['email', 'phone', 'name', 'rut', 'address', 'first_name', 'last_name', 'telegram_id'];\n    \n    for (const key in node) {\n        if (sensitive.some(s => key.toLowerCase().includes(s))) {\n            node[key] = redact(node[key]);\n        } else if (typeof node[key] === 'object') {\n            processNode(node[key]);\n        }\n    }\n    return node;\n}\n\nreturn items.map(item => {\n    const clean = processNode(JSON.parse(JSON.stringify(item.json)));\n    return { json: clean };\n});\n"
+      },
+      "id": "redact",
+      "name": "Redact PII",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "system_errors",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "={{ $json.workflow.id }}",
+            "node_name": "={{ $json.execution.lastNodeExecuted }}",
+            "error_message": "={{ $json.error.message }}",
+            "error_stack": "={{ JSON.stringify($json.error.stack) }}"
+          }
+        }
+      },
+      "id": "db_log",
+      "name": "Log to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        400,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "5391760292",
+        "text": "={{ \"\ud83d\udea8 <b>Error en AutoAgenda</b>\\n\\n<b>WF:</b> \" + $node[\"Redact PII\"].json.workflow.name + \"\\n<b>Nodo:</b> \" + $node[\"Redact PII\"].json.execution.lastNodeExecuted + \"\\n<b>Msg:</b> \" + $node[\"Redact PII\"].json.error.message }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "tg_alert",
+      "name": "Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        600,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "KGOR7voFnGIJfn1U",
+          "name": "Telegram Bot AutoAgenda"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Redact PII",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redact PII": {
+      "main": [
+        [
+          {
+            "node": "Log to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to DB": {
+      "main": [
+        [
+          {
+            "node": "Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

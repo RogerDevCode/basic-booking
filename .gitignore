@@ -1,0 +1,83 @@
+### Global OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+### Logs y temporales
+*.log
+*.tmp
+tmp/
+logs/
+reinstall.log
+
+### Python (db_keepalive y cualquier otro módulo)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.envrc
+
+# Entornos virtuales
+venv/
+.env/
+.venv/
+env/
+ENV/
+
+### Node / JS (por si luego metes tooling JS o n8n local)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+.pnpm-debug.log*
+.npm/
+.cache/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+### Docker / contenedores
+.docker/
+docker-data/
+.dockerenv
+
+### n8n (si luego exportas cosas aquí)
+# Si en la raíz creas un directorio para exportar workflows:
+# workflows/
+# credentials/
+# variables/
+# tags/
+# Ajusta según lo que realmente uses.
+# Por defecto: NO ignores los .json de workflows para versionarlos.
+
+# Ignorar binarios pesados opcionales (capturas, etc.)
+# Si no quieres versionar imágenes grandes:
+# *.png
+# *.jpg
+# *.jpeg
+
+### IDE / herramientas
+.idea/
+.vscode/
+*.code-workspace
+*.sublime-project
+*.sublime-workspace
+
+### SQL dumps grandes (si los generas como backups)
+# current_schema_dump.sql y current_tables_dump.sql parecen generados;
+# si son artefactos regenerables, ignóralos, si no, coméntalo.
+current_schema_dump.sql
+current_tables_dump.sql
+.env
+.env.test

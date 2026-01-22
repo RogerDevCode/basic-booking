@@ -1,0 +1,656 @@
+{
+  "name": "BB_06_Admin_Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "admin-v3",
+        "responseMode": "responseNode"
+      },
+      "id": "web_html",
+      "name": "GET /admin",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>AutoAgenda Admin</title>\n    \n    <!-- Alpine.js -->\n    <script defer src=\"https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js\"></script>\n    \n    <!-- FullCalendar -->\n    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>\n    <script src=\"https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.10/locales/es.global.min.js\"></script>\n\n    <!-- Google Fonts -->\n    <link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap\" rel=\"stylesheet\">\n\n    <!-- Tailwind CSS -->\n    <script src=\"https://cdn.tailwindcss.com\"></script>\n    <script>\n        tailwind.config = {\n            darkMode: 'class',\n            theme: {\n                extend: {\n                    fontFamily: { sans: ['Inter', 'sans-serif'] },\n                    colors: {\n                        primary: { \n                            DEFAULT: 'var(--color-primary, #2563eb)',\n                            hover: 'var(--color-primary-hover, #1d4ed8)'\n                        }\n                    }\n                }\n            }\n        }\n    </script>\n\n    <style>\n        :root {\n            --color-primary: #2563eb;\n            --color-primary-hover: #1d4ed8;\n        }\n        [x-cloak] { display: none !important; }\n        .fc { border: 0 !important; }\n        .fc-toolbar-title { font-size: 1.25rem !important; font-weight: 700; text-transform: capitalize; }\n        .fc-button { background: white !important; color: #374151 !important; border: 1px solid #e5e7eb !important; text-transform: capitalize; font-weight: 600; }\n        .fc-button-active { background: var(--color-primary) !important; color: white !important; border-color: var(--color-primary) !important; }\n        .fc-event { border: none !important; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }\n    </style>\n</head>\n<body class=\"bg-gray-50 text-slate-800 h-screen overflow-hidden\" x-data=\"app()\">\n\n    <!-- LOGIN SCREEN -->\n    <div x-show=\"!isAuthenticated\" class=\"flex items-center justify-center h-full bg-slate-900\" x-transition.opacity>\n        <div class=\"bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md\">\n            <div class=\"flex justify-center mb-6\">\n                <div class=\"w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold text-xl\" :style=\"{ backgroundColor: config.COLOR_PRIMARY || '#2563eb' }\">A</div>\n            </div>\n            <h2 class=\"text-2xl font-bold text-center mb-6 text-slate-800\" x-text=\"config.APP_TITLE || 'Admin Portal'\"></h2>\n            <form @submit.prevent=\"login\">\n                <div class=\"mb-4\">\n                    <label class=\"block text-sm font-bold mb-2 text-slate-600\">Access Token</label>\n                    <input type=\"password\" x-model=\"tokenInput\" class=\"w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition\" placeholder=\"Paste your JWT here...\">\n                </div>\n                <button type=\"submit\" class=\"w-full text-white font-bold py-3 rounded-lg transition transform active:scale-95\"\n                    :style=\"{ backgroundColor: config.COLOR_PRIMARY || '#2563eb' }\">\n                    <span x-show=\"!loading\">Unlock Dashboard</span>\n                    <span x-show=\"loading\" class=\"animate-pulse\">Verifying...</span>\n                </button>\n                <p x-show=\"loginError\" x-text=\"loginError\" class=\"text-red-500 text-sm text-center mt-4\"></p>\n            </form>\n        </div>\n    </div>\n\n    <!-- MAIN DASHBOARD -->\n    <div x-show=\"isAuthenticated\" class=\"flex h-full\" x-cloak x-transition>\n        \n        <!-- SIDEBAR -->\n        <aside class=\"w-80 bg-white border-r border-gray-200 flex flex-col z-20 shadow-xl\">\n            <div class=\"h-16 flex items-center px-6 border-b border-gray-100\">\n                <div class=\"w-8 h-8 rounded flex items-center justify-center text-white font-bold mr-3\" :style=\"{ backgroundColor: config.COLOR_PRIMARY }\">A</div>\n                <span class=\"font-bold text-lg text-slate-800\" x-text=\"config.APP_TITLE\">AutoAgenda</span>\n            </div>\n\n            <div class=\"p-6 flex-1 overflow-y-auto space-y-8\">\n                \n                <!-- METRICS CARD -->\n                <div class=\"bg-slate-900 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden group\">\n                    <div class=\"absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition\">\n                        <svg class=\"w-24 h-24\" fill=\"currentColor\" viewBox=\"0 0 20 20\"><path d=\"M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z\"></path><path d=\"M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z\"></path></svg>\n                    </div>\n                    <div class=\"relative z-10\">\n                        <p class=\"text-blue-300 text-xs font-bold uppercase tracking-wider mb-1\">Utilization</p>\n                        <h3 class=\"text-4xl font-extrabold mb-4\" x-text=\"metrics.occupancy + '%'\">--%</h3>\n                        <div class=\"grid grid-cols-2 gap-4 border-t border-slate-700 pt-4\">\n                            <div>\n                                <p class=\"text-xs text-slate-400\">Bookings</p>\n                                <p class=\"text-xl font-bold\" x-text=\"metrics.todayBookings\">--</p>\n                            </div>\n                            <div>\n                                <p class=\"text-xs text-slate-400\">Total Users</p>\n                                <p class=\"text-xl font-bold text-green-400\" x-text=\"metrics.totalUsers\">--</p>\n                            </div>\n                        </div>\n                    </div>\n                </div>\n\n                <!-- CONFIG FORM -->\n                <div>\n                    <h4 class=\"text-xs font-bold text-slate-400 uppercase tracking-wider mb-4\">System Configuration</h4>\n                    <form @submit.prevent=\"saveConfig\" class=\"space-y-4\">\n                        <div class=\"grid grid-cols-2 gap-3\">\n                            <div>\n                                <label class=\"block text-xs font-semibold text-slate-600 mb-1\">Alert 1 (H)</label>\n                                <input type=\"number\" x-model.number=\"config.reminder_1_hours\" class=\"w-full p-2 border rounded text-sm\">\n                            </div>\n                            <div>\n                                <label class=\"block text-xs font-semibold text-slate-600 mb-1\">Alert 2 (H)</label>\n                                <input type=\"number\" x-model.number=\"config.reminder_2_hours\" class=\"w-full p-2 border rounded text-sm\">\n                            </div>\n                        </div>\n\n                        <div class=\"grid grid-cols-3 gap-2\">\n                            <div><label class=\"block text-[10px] font-bold text-slate-500\">Min</label><input type=\"number\" x-model.number=\"config.MIN_DURATION_MIN\" class=\"w-full p-2 border rounded text-xs text-center\"></div>\n                            <div><label class=\"block text-[10px] font-bold text-slate-500\">Def</label><input type=\"number\" x-model.number=\"config.SLOT_DURATION_MINS\" class=\"w-full p-2 border rounded text-xs text-center font-bold text-blue-600\"></div>\n                            <div><label class=\"block text-[10px] font-bold text-slate-500\">Max</label><input type=\"number\" x-model.number=\"config.MAX_DURATION_MIN\" class=\"w-full p-2 border rounded text-xs text-center\"></div>\n                        </div>\n                        \n                        <!-- NEW: Timezone Display -->\n                        <div class=\"text-xs text-slate-400 text-center\">\n                            Timezone: <span class=\"font-mono\" x-text=\"config.TIMEZONE\"></span>\n                        </div>\n\n                        <button type=\"submit\" class=\"w-full text-white font-bold py-2 rounded-lg text-sm shadow-md transition flex justify-center items-center\"\n                            :style=\"{ backgroundColor: config.COLOR_PRIMARY }\">\n                            <span x-show=\"!saving\">Save Changes</span>\n                            <svg x-show=\"saving\" class=\"animate-spin h-4 w-4 text-white ml-2\" xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\"><circle class=\"opacity-25\" cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"4\"></circle><path class=\"opacity-75\" fill=\"currentColor\" d=\"M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z\"></path></svg>\n                        </button>\n                    </form>\n                </div>\n            </div>\n            \n            <div class=\"p-4 border-t border-gray-200\">\n                <button @click=\"logout\" class=\"w-full text-left flex items-center px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition\">\n                    Logout\n                </button>\n            </div>\n        </aside>\n\n        <!-- MAIN CONTENT -->\n        <main class=\"flex-1 bg-gray-50 p-6 relative\">\n            <div id=\"calendar\" class=\"bg-white rounded-2xl shadow-sm p-6 h-full border border-gray-200\"></div>\n        </main>\n    </div>\n\n    <script>\n        function app() {\n            return {\n                isAuthenticated: false,\n                tokenInput: '',\n                loading: false,\n                saving: false,\n                loginError: '',\n                // Default fallback config\n                config: { \n                    reminder_1_hours: 24, reminder_2_hours: 2, \n                    SLOT_DURATION_MINS: 30, MIN_DURATION_MIN: 15, MAX_DURATION_MIN: 120,\n                    COLOR_PRIMARY: '#2563eb', APP_TITLE: 'AutoAgenda', TIMEZONE: 'America/Santiago'\n                },\n                metrics: { occupancy: 0, todayBookings: 0, totalUsers: 0 },\n                calendar: null,\n                apiBase: window.location.origin + '/webhook',\n\n                init() {\n                    const token = localStorage.getItem('admin_token');\n                    if (token) {\n                        this.isAuthenticated = true;\n                        this.$nextTick(() => this.loadDataAndInit());\n                    }\n                },\n\n                async login() {\n                    this.loading = true;\n                    this.loginError = '';\n                    try {\n                        // Test Token\n                        const res = await fetch(`${this.apiBase}/api/stats-v3`, {\n                            headers: { 'Authorization': `Bearer ${this.tokenInput}` }\n                        });\n                        \n                        if (res.ok) {\n                            localStorage.setItem('admin_token', this.tokenInput);\n                            this.isAuthenticated = true;\n                            this.$nextTick(() => this.loadDataAndInit());\n                        } else {\n                            this.loginError = 'Invalid token';\n                        }\n                    } catch (e) { this.loginError = 'Connection error'; }\n                    this.loading = false;\n                },\n\n                logout() {\n                    localStorage.removeItem('admin_token');\n                    this.isAuthenticated = false;\n                    this.tokenInput = '';\n                },\n\n                async loadDataAndInit() {\n                    // 1. Fetch Config First\n                    try {\n                        const res = await fetch(`${this.apiBase}/api/stats-v3`, {\n                            headers: { 'Authorization': `Bearer ${localStorage.getItem('admin_token')}` }\n                        });\n                        if (!res.ok) { this.logout(); return; }\n                        const data = await res.json();\n                        \n                        if (data.config) {\n                            this.config = { ...this.config, ...data.config };\n                            this.applyTheme();\n                        }\n                        this.metrics.todayBookings = data.stats.today_bookings || 0;\n                        this.metrics.totalUsers = data.stats.total_users || 0;\n                        \n                        this.initCalendar();\n                        \n                    } catch(e) { console.error(\"Init failed\", e); }\n                },\n\n                applyTheme() {\n                    document.documentElement.style.setProperty('--color-primary', this.config.COLOR_PRIMARY);\n                    document.documentElement.style.setProperty('--color-primary-hover', this.config.COLOR_PRIMARY_HOVER || this.config.COLOR_PRIMARY);\n                },\n\n                initCalendar() {\n                    const calendarEl = document.getElementById('calendar');\n                    if (!calendarEl || this.calendar) return;\n\n                    this.calendar = new FullCalendar.Calendar(calendarEl, {\n                        initialView: 'timeGridDay',\n                        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },\n                        locale: 'es',\n                        timeZone: this.config.TIMEZONE || 'America/Santiago',\n                        slotMinTime: this.config.CALENDAR_MIN_TIME || '07:00:00',\n                        slotMaxTime: this.config.CALENDAR_MAX_TIME || '21:00:00',\n                        slotDuration: `00:${this.config.SLOT_DURATION_MINS}:00`,\n                        allDaySlot: false,\n                        height: '100%',\n                        expandRows: true,\n                        nowIndicator: true,\n                        \n                        events: async (info, success, failure) => {\n                            try {\n                                const url = `${this.apiBase}/api/calendar-v3?start=${info.startStr}&end=${info.endStr}`;\n                                const res = await fetch(url, {\n                                    headers: { 'Authorization': `Bearer ${localStorage.getItem('admin_token')}` }\n                                });\n                                const data = await res.json();\n                                const events = (data.events || []).map(e => ({\n                                    id: e.id,\n                                    title: e.title,\n                                    start: e.start,\n                                    end: e.end,\n                                    backgroundColor: e.status === 'confirmed' ? this.config.COLOR_EVENT_CONFIRMED : this.config.COLOR_EVENT_PENDING,\n                                    textColor: this.config.COLOR_EVENT_TEXT,\n                                    extendedProps: { ...e }\n                                }));\n                                this.updateMetrics(events, info.start, info.end);\n                                success(events);\n                            } catch (e) { failure(e); }\n                        },\n                        eventContent: (arg) => {\n                            return { html: `<div class=\"p-1 overflow-hidden\"><div class=\"text-[10px] font-semibold opacity-75\">${arg.timeText}</div><div class=\"font-bold text-xs truncate\">${arg.event.title}</div></div>` };\n                        }\n                    });\n                    this.calendar.render();\n                },\n\n                async saveConfig() {\n                    this.saving = true;\n                    try {\n                        const res = await fetch(`${this.apiBase}/api/config-v3`, {\n                            method: 'POST',\n                            headers: { \n                                'Authorization': `Bearer ${localStorage.getItem('admin_token')}`,\n                                'Content-Type': 'application/json'\n                            },\n                            body: JSON.stringify(this.config)\n                        });\n                        if (res.ok) {\n                            alert(\"Config Saved! Reload to apply system-wide changes.\");\n                            this.loadDataAndInit(); // Refresh local state\n                        }\n                    } catch (e) { alert(\"Save failed\"); }\n                    this.saving = false;\n                },\n\n                updateMetrics(events, start, end) {\n                    const totalDays = (end - start) / (1000 * 60 * 60 * 24);\n                    // Dynamic calculation based on schedule (Approx)\n                    const startH = parseInt(this.config.SCHEDULE_START_HOUR || 9);\n                    const endH = parseInt(this.config.SCHEDULE_END_HOUR || 18);\n                    const slotsPerDay = (endH - startH) * (60 / parseInt(this.config.SLOT_DURATION_MINS || 30));\n                    \n                    const totalSlots = totalDays * slotsPerDay; \n                    const booked = events.length;\n                    this.metrics.occupancy = totalSlots > 0 ? Math.round((booked / totalSlots) * 100) : 0;\n                }\n            }\n        }\n    </script>\n</body>\n</html>\n",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp_html",
+      "name": "Serve HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "api/stats-v3",
+        "responseMode": "responseNode"
+      },
+      "id": "web_stats",
+      "name": "GET /api/stats",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\ntry {\n    const headers = $input.all()[0].json.headers;\n    const authHeader = headers['authorization'] || headers['Authorization'];\n\n    if (!authHeader || !authHeader.startsWith('Bearer ')) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"UNAUTHORIZED: Missing token\" } }];\n    }\n\n    const token = authHeader.split(' ')[1];\n    if (token.split('.').length !== 3) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"INVALID_TOKEN_FORMAT\" } }];\n    }\n    \n    // In production: Verify Signature using crypto\n    // Here: Decode and check exp/role\n    const payload = token.split('.')[1];\n    const decoded = JSON.parse(Buffer.from(payload, 'base64').toString());\n    \n    if (decoded.exp && Date.now() >= decoded.exp * 1000) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"EXPIRED_TOKEN\" } }];\n    }\n    \n    if (decoded.role !== 'admin') {\n        return [{ json: { authenticated: false, error: true, status: 403, message: \"FORBIDDEN: Admin role required\" } }];\n    }\n\n    return [{ json: { ...$input.all()[0].json, user: decoded, authenticated: true, error: false } }];\n\n} catch (e) {\n    return [{ json: { authenticated: false, error: true, status: 401, message: \"INVALID_TOKEN\" } }];\n}\n"
+      },
+      "id": "auth_stats",
+      "name": "Auth: Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "boolean",
+        "value1": "={{ $json.authenticated }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": true,
+              "outputKey": "success"
+            }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "check_stats",
+      "name": "Check Auth Stats",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.status || 401 }}"
+        }
+      },
+      "id": "err_stats",
+      "name": "401 Stats",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nSELECT \n    (SELECT COUNT(*) FROM bookings WHERE start_time::date = CURRENT_DATE) as today_bookings,\n    (SELECT COUNT(*) FROM users) as total_users,\n    public.get_tenant_config_json('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') as config;\n"
+      },
+      "id": "db_stats",
+      "name": "DB: Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        600,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { stats: { today_bookings: $json.today_bookings, total_users: $json.total_users }, config: $json.config } }}"
+      },
+      "id": "resp_stats",
+      "name": "Respond Stats",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "api/calendar-v3",
+        "responseMode": "responseNode"
+      },
+      "id": "web_cal",
+      "name": "GET /api/calendar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\ntry {\n    const headers = $input.all()[0].json.headers;\n    const authHeader = headers['authorization'] || headers['Authorization'];\n\n    if (!authHeader || !authHeader.startsWith('Bearer ')) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"UNAUTHORIZED: Missing token\" } }];\n    }\n\n    const token = authHeader.split(' ')[1];\n    if (token.split('.').length !== 3) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"INVALID_TOKEN_FORMAT\" } }];\n    }\n    \n    // In production: Verify Signature using crypto\n    // Here: Decode and check exp/role\n    const payload = token.split('.')[1];\n    const decoded = JSON.parse(Buffer.from(payload, 'base64').toString());\n    \n    if (decoded.exp && Date.now() >= decoded.exp * 1000) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"EXPIRED_TOKEN\" } }];\n    }\n    \n    if (decoded.role !== 'admin') {\n        return [{ json: { authenticated: false, error: true, status: 403, message: \"FORBIDDEN: Admin role required\" } }];\n    }\n\n    return [{ json: { ...$input.all()[0].json, user: decoded, authenticated: true, error: false } }];\n\n} catch (e) {\n    return [{ json: { authenticated: false, error: true, status: 401, message: \"INVALID_TOKEN\" } }];\n}\n"
+      },
+      "id": "auth_cal",
+      "name": "Auth: Calendar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "boolean",
+        "value1": "={{ $json.authenticated }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": true,
+              "outputKey": "success"
+            }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "check_cal",
+      "name": "Check Auth Cal",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        400,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.status || 401 }}"
+        }
+      },
+      "id": "err_cal",
+      "name": "401 Cal",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        400,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nSELECT b.id, b.start_time, b.end_time, b.status, u.first_name, u.last_name, p.name as pro_name\nFROM bookings b\nJOIN users u ON b.user_id = u.id\nJOIN professionals p ON b.professional_id = p.id\nWHERE b.status != 'cancelled'\nAND b.start_time >= $1::timestamp\nAND b.end_time <= $2::timestamp;\n",
+        "options": {
+          "queryParameters": "={{ [$json.query.start || '2026-01-01', $json.query.end || '2026-12-31'] }}"
+        }
+      },
+      "id": "db_cal",
+      "name": "DB: Calendar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        600,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all(); const validItems = items.filter(i => i.json.id); const events = validItems.map(item => { const i = item.json; return { id: i.id, title: i.first_name, start: new Date(i.start_time).toISOString(), end: new Date(i.end_time).toISOString(), status: i.status }; }); return [{ json: { events } }];"
+      },
+      "id": "fmt_cal",
+      "name": "Format Calendar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "resp_cal",
+      "name": "Respond Calendar",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/config-v3",
+        "responseMode": "responseNode"
+      },
+      "id": "web_conf",
+      "name": "POST /api/config",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\ntry {\n    const headers = $input.all()[0].json.headers;\n    const authHeader = headers['authorization'] || headers['Authorization'];\n\n    if (!authHeader || !authHeader.startsWith('Bearer ')) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"UNAUTHORIZED: Missing token\" } }];\n    }\n\n    const token = authHeader.split(' ')[1];\n    if (token.split('.').length !== 3) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"INVALID_TOKEN_FORMAT\" } }];\n    }\n    \n    // In production: Verify Signature using crypto\n    // Here: Decode and check exp/role\n    const payload = token.split('.')[1];\n    const decoded = JSON.parse(Buffer.from(payload, 'base64').toString());\n    \n    if (decoded.exp && Date.now() >= decoded.exp * 1000) {\n        return [{ json: { authenticated: false, error: true, status: 401, message: \"EXPIRED_TOKEN\" } }];\n    }\n    \n    if (decoded.role !== 'admin') {\n        return [{ json: { authenticated: false, error: true, status: 403, message: \"FORBIDDEN: Admin role required\" } }];\n    }\n\n    return [{ json: { ...$input.all()[0].json, user: decoded, authenticated: true, error: false } }];\n\n} catch (e) {\n    return [{ json: { authenticated: false, error: true, status: 401, message: \"INVALID_TOKEN\" } }];\n}\n"
+      },
+      "id": "auth_conf",
+      "name": "Auth: Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "boolean",
+        "value1": "={{ $json.authenticated }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": true,
+              "outputKey": "success"
+            }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "check_conf",
+      "name": "Check Auth Conf",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        400,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.status || 401 }}"
+        }
+      },
+      "id": "err_conf",
+      "name": "401 Conf",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        400,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\ntry {\n    const body = $input.all()[0].json.body || {};\n    const errors = [];\n    \n    // Strict Type Checking\n    if (typeof body.reminder_1_hours !== 'number' || isNaN(body.reminder_1_hours)) errors.push(\"reminder_1_hours must be number\");\n    if (typeof body.reminder_2_hours !== 'number' || isNaN(body.reminder_2_hours)) errors.push(\"reminder_2_hours must be number\");\n    if (typeof body.is_active !== 'boolean') errors.push(\"is_active must be boolean\");\n    \n    // Check extra fields or injections (simple check)\n    const allowedKeys = ['reminder_1_hours', 'reminder_2_hours', 'is_active', 'SLOT_DURATION_MINS', 'MIN_DURATION_MIN', 'MAX_DURATION_MIN', 'SCHEDULE_START_HOUR', 'SCHEDULE_END_HOUR', 'CALENDAR_MIN_TIME', 'CALENDAR_MAX_TIME', 'COLOR_PRIMARY', 'COLOR_EVENT_CONFIRMED', 'COLOR_EVENT_PENDING', 'COLOR_EVENT_TEXT', 'APP_TITLE', 'TIMEZONE'];\n    \n    for (const key of Object.keys(body)) {\n        if (!allowedKeys.includes(key)) {\n            // Strict Mode: Reject unknown keys to prevent pollution\n            // errors.push(`Unknown key: ${key}`);\n        }\n    }\n\n    if (errors.length > 0) return [{ json: { error: true, status: 400, message: errors.join(', ') } }];\n    \n    return [{ json: { ...body, valid: true } }];\n\n} catch (e) {\n    return [{ json: { error: true, status: 400, message: \"Invalid JSON body\" } }];\n}\n"
+      },
+      "id": "guard_body",
+      "name": "Guard: Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "boolean",
+        "value1": "={{ $json.valid }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": true,
+              "outputKey": "valid"
+            }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "check_body",
+      "name": "Valid Body?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        800,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "err_body",
+      "name": "400 Bad Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        800,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nUPDATE notification_configs \nSET reminder_1_hours = $1, reminder_2_hours = $2, is_active = $3\nWHERE tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';\n\nINSERT INTO app_config (tenant_id, key, value, type)\nSELECT \n    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', \n    key, \n    value::text, \n    'number' \nFROM jsonb_each_text($4::jsonb)\nWHERE key IN ('SLOT_DURATION_MINS', 'CALENDAR_MIN_TIME', 'CALENDAR_MAX_TIME', 'SCHEDULE_START_HOUR', 'SCHEDULE_END_HOUR')\nON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value;\n                ",
+        "options": {
+          "queryParameters": "={{ [$json.reminder_1_hours, $json.reminder_2_hours, $json.is_active, JSON.stringify($json)] }}"
+        }
+      },
+      "id": "db_upd",
+      "name": "DB: Update",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1000,
+        1000
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\ntry {\n    const logEntry = {\n      timestamp: new Date().toISOString(),\n      itemsCount: items.length,\n      preview: JSON.stringify(items[0]?.json).slice(0, 200)\n    };\n    console.log('[WF-OUTPUT]', JSON.stringify(logEntry));\n} catch(e) {}\nreturn items;"
+      },
+      "id": "log_conf",
+      "name": "Log Output (Respond Config)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true } }}"
+      },
+      "id": "resp_conf",
+      "name": "Respond Config",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        1000
+      ]
+    }
+  ],
+  "connections": {
+    "GET /admin": {
+      "main": [
+        [
+          {
+            "node": "Serve HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /api/stats": {
+      "main": [
+        [
+          {
+            "node": "Auth: Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: Stats": {
+      "main": [
+        [
+          {
+            "node": "Check Auth Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Auth Stats": {
+      "main": [
+        [
+          {
+            "node": "DB: Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "401 Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Config": {
+      "main": [
+        [
+          {
+            "node": "Respond Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /api/calendar": {
+      "main": [
+        [
+          {
+            "node": "Auth: Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: Calendar": {
+      "main": [
+        [
+          {
+            "node": "Check Auth Cal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Auth Cal": {
+      "main": [
+        [
+          {
+            "node": "DB: Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "401 Cal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Calendar": {
+      "main": [
+        [
+          {
+            "node": "Format Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Calendar": {
+      "main": [
+        [
+          {
+            "node": "Respond Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /api/config": {
+      "main": [
+        [
+          {
+            "node": "Auth: Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: Config": {
+      "main": [
+        [
+          {
+            "node": "Check Auth Conf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Auth Conf": {
+      "main": [
+        [
+          {
+            "node": "Guard: Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "401 Conf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard: Body": {
+      "main": [
+        [
+          {
+            "node": "Valid Body?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Body?": {
+      "main": [
+        [
+          {
+            "node": "DB: Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "400 Bad Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Update": {
+      "main": [
+        [
+          {
+            "node": "Log Output (Respond Config)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Output (Respond Config)": {
+      "main": [
+        [
+          {
+            "node": "Respond Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
