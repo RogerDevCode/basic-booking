@@ -1,0 +1,439 @@
+{
+  "name": "BB_09_Deep_Link_Redirect",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "agendar-v3/:slug",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "web_deep",
+      "name": "GET /agendar-v3/:slug",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// PARANOID GUARD: Input Validation (Pattern A)\n// Returns error flag instead of throwing\n// ============================================================\nconst slug = $input.first().json.params?.slug;\n\n// Type validation\nif (!slug || typeof slug !== 'string') {\n  return { \n    error: true, \n    error_message: 'INVALID_SLUG_TYPE',\n    error_detail: 'Slug parameter is missing or not a string',\n    slug: null,\n    timestamp: new Date().toISOString()\n  };\n}\n\n// Length validation\nif (slug.length < 1 || slug.length > 50) {\n  return { \n    error: true, \n    error_message: 'SLUG_LENGTH_INVALID',\n    error_detail: `Slug length (${slug.length}) must be between 1-50 characters`,\n    slug: null,\n    timestamp: new Date().toISOString()\n  };\n}\n\n// Format validation: Only alphanumeric + hyphens\nconst slugPattern = /^[a-z0-9-]+$/i;\nif (!slugPattern.test(slug)) {\n  return { \n    error: true, \n    error_message: 'INVALID_SLUG_FORMAT',\n    error_detail: 'Slug contains invalid characters (only a-z, 0-9, - allowed)',\n    slug: slug,\n    timestamp: new Date().toISOString()\n  };\n}\n\n// Sanitize and normalize\nconst sanitized = slug.toLowerCase().trim();\n\n// Success case\nreturn { \n  error: false,\n  slug: sanitized,\n  timestamp: new Date().toISOString(),\n  ip: $input.first().json.headers?.['x-forwarded-for'] || 'unknown'\n};"
+      },
+      "id": "guard_validate",
+      "name": "Paranoid Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "check_validation",
+      "name": "Validation OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT slug, name FROM public.professionals WHERE slug = '{{ $json.slug }}' AND deleted_at IS NULL LIMIT 1"
+      },
+      "id": "db_lookup",
+      "name": "DB: Find Professional",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        750,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM public.app_config WHERE key = 'TELEGRAM_BOT_USERNAME' AND deleted_at IS NULL LIMIT 1"
+      },
+      "id": "db_bot_config",
+      "name": "DB: Get Bot Username",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1000,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// Merge professional data with bot config\n// ============================================================\nconst items = $input.all();\n\n// Extract data from both DB queries\nconst professionalData = items[0].json; // From DB: Find Professional\nconst botConfig = items[1].json;         // From DB: Get Bot Username\n\n// Get bot username with fallback\nconst botUsername = botConfig?.value || 'setcalendarbot';\n\n// Check if professional was found\nconst found = !!professionalData?.slug;\n\nreturn {\n  slug: professionalData?.slug || null,\n  professional_name: professionalData?.name || null,\n  bot_username: botUsername,\n  found: found,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "merge_data",
+      "name": "Merge Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.found }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check_found",
+      "name": "Professional Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (event_type, event_data, created_at) VALUES ('DEEP_LINK_SUCCESS', '{{ $json }}', NOW())"
+      },
+      "id": "log_success",
+      "name": "Log: Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1750,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "redirect",
+        "redirectURL": "={{ 'https://t.me/' + $json.bot_username + '?start=' + $json.slug }}"
+      },
+      "id": "resp_redirect",
+      "name": "Redirect to Telegram",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (event_type, event_data, created_at) VALUES ('DEEP_LINK_404', '{{ $json }}', NOW())"
+      },
+      "id": "log_404",
+      "name": "Log: Not Found",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1750,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Profesional no encontrado - AutoAgenda</title>\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body {\n      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;\n      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n      min-height: 100vh;\n      display: flex;\n      align-items: center;\n      justify-content: center;\n      padding: 20px;\n    }\n    .card {\n      background: rgba(255, 255, 255, 0.95);\n      backdrop-filter: blur(10px);\n      border-radius: 20px;\n      padding: 40px;\n      max-width: 500px;\n      box-shadow: 0 20px 60px rgba(0,0,0,0.3);\n      text-align: center;\n    }\n    h1 {\n      color: #764ba2;\n      font-size: 2em;\n      margin-bottom: 20px;\n    }\n    p {\n      color: #555;\n      line-height: 1.6;\n      margin-bottom: 30px;\n    }\n    .code {\n      background: #f5f5f5;\n      padding: 10px 20px;\n      border-radius: 8px;\n      font-family: 'Courier New', monospace;\n      color: #d63031;\n      margin: 20px 0;\n    }\n    a {\n      display: inline-block;\n      background: linear-gradient(135deg, #667eea, #764ba2);\n      color: white;\n      padding: 12px 30px;\n      text-decoration: none;\n      border-radius: 8px;\n      font-weight: 600;\n      transition: transform 0.2s;\n    }\n    a:hover { transform: scale(1.05); }\n  </style>\n</head>\n<body>\n  <div class=\"card\">\n    <h1>🔍 Profesional no encontrado</h1>\n    <p>El enlace que intentas acceder no existe o ha sido desactivado.</p>\n    <div class=\"code\">{{ $node[\"Merge Data\"].json.slug || 'slug inválido' }}</div>\n    <p>Verifica el enlace o contacta al profesional para obtener uno válido.</p>\n    <a href=\"https://t.me/{{ $json.bot_username }}\">Ir al Bot de Telegram</a>\n  </div>\n</body>\n</html>",
+        "options": {
+          "responseCode": 404,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp_404",
+      "name": "404 Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// ERROR LOGGER: Prepare validation error for BB_00\n// ============================================================\nconst guardData = $input.first().json;\n\nreturn {\n  workflow_name: 'BB_09_Deep_Link_Redirect',\n  error_type: 'VALIDATION_FAILURE',\n  error_message: guardData.error_message || 'UNKNOWN_VALIDATION_ERROR',\n  error_detail: guardData.error_detail || 'No details provided',\n  context: {\n    slug: guardData.slug || 'N/A',\n    timestamp: guardData.timestamp || new Date().toISOString()\n  },\n  severity: 'MEDIUM'\n};"
+      },
+      "id": "prep_error",
+      "name": "Prepare Error Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (event_type, event_data, created_at) VALUES ('DEEP_LINK_VALIDATION_ERROR', '{{ $json }}', NOW())"
+      },
+      "id": "log_error",
+      "name": "Log: Validation Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1000,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow('BB_00_Global_Error_Handler').id }}",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "call_bb00",
+      "name": "Call BB_00 Error Handler",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Error de Validación - AutoAgenda</title>\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body {\n      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;\n      background: linear-gradient(135deg, #d63031 0%, #e84393 100%);\n      min-height: 100vh;\n      display: flex;\n      align-items: center;\n      justify-content: center;\n      padding: 20px;\n    }\n    .card {\n      background: rgba(255, 255, 255, 0.95);\n      backdrop-filter: blur(10px);\n      border-radius: 20px;\n      padding: 40px;\n      max-width: 500px;\n      box-shadow: 0 20px 60px rgba(0,0,0,0.3);\n      text-align: center;\n    }\n    h1 {\n      color: #d63031;\n      font-size: 2em;\n      margin-bottom: 20px;\n    }\n    p {\n      color: #555;\n      line-height: 1.6;\n      margin-bottom: 30px;\n    }\n    .error-code {\n      background: #ffe0e0;\n      padding: 10px 20px;\n      border-radius: 8px;\n      font-family: 'Courier New', monospace;\n      color: #d63031;\n      margin: 20px 0;\n      font-weight: 600;\n    }\n    .error-detail {\n      background: #f5f5f5;\n      padding: 10px;\n      border-radius: 6px;\n      font-size: 0.9em;\n      color: #666;\n      margin-top: 10px;\n    }\n  </style>\n</head>\n<body>\n  <div class=\"card\">\n    <h1>⚠️ Error de Validación</h1>\n    <p>El enlace contiene caracteres inválidos o no cumple con el formato esperado.</p>\n    <div class=\"error-code\">{{ $node[\"Prepare Error Data\"].json.error_message || 'VALIDATION_ERROR' }}</div>\n    <div class=\"error-detail\">{{ $node[\"Prepare Error Data\"].json.error_detail || 'Verifica que el enlace sea válido' }}</div>\n    <p style=\"margin-top: 20px; font-size: 0.9em;\">Formato válido: solo letras, números y guiones (a-z, 0-9, -)</p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp_error",
+      "name": "400 Bad Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1500,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "GET /agendar-v3/:slug": {
+      "main": [
+        [
+          {
+            "node": "Paranoid Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paranoid Guard": {
+      "main": [
+        [
+          {
+            "node": "Validation OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation OK?": {
+      "main": [
+        [
+          {
+            "node": "DB: Find Professional",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Error Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Find Professional": {
+      "main": [
+        [
+          {
+            "node": "DB: Get Bot Username",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Bot Username": {
+      "main": [
+        [
+          {
+            "node": "Merge Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Data": {
+      "main": [
+        [
+          {
+            "node": "Professional Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Professional Found?": {
+      "main": [
+        [
+          {
+            "node": "Log: Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log: Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: Success": {
+      "main": [
+        [
+          {
+            "node": "Redirect to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: Not Found": {
+      "main": [
+        [
+          {
+            "node": "404 Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Data": {
+      "main": [
+        [
+          {
+            "node": "Log: Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Call BB_00 Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call BB_00 Error Handler": {
+      "main": [
+        [
+          {
+            "node": "400 Bad Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

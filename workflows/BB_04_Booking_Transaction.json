@@ -2,17 +2,6 @@
   "name": "BB_04_Booking_Transaction",
   "nodes": [
     {
-      "parameters": {},
-      "id": "sub_trig",
-      "name": "Execute Workflow Trigger",
-      "type": "n8n-nodes-base.executeWorkflowTrigger",
-      "typeVersion": 1,
-      "position": [
-        0,
-        100
-      ]
-    },
-    {
       "parameters": {
         "httpMethod": "POST",
         "path": "book-v3",
@@ -29,7 +18,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\ntry {\n    const allItems = $input.all();\n    if (!allItems || allItems.length === 0) return [{ json: { error: true, code: \"ERR_NO_DATA\", message: \"No data received\", status: 400 } }];\n    const root = allItems[0].json || {};\n    const input = root.body ? root.body : root;\n    \n    const errors = [];\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n    if (!input.professional_id || !uuidRegex.test(input.professional_id)) errors.push(\"Invalid professional_id\");\n    if (!input.user_id || !uuidRegex.test(input.user_id)) errors.push(\"Invalid user_id\");\n    \n    // Strict Date Parsing\n    const start = new Date(input.start_time);\n    const end = new Date(input.end_time);\n    \n    if (isNaN(start.getTime())) errors.push(\"Invalid start_time format\");\n    if (isNaN(end.getTime())) errors.push(\"Invalid end_time format\");\n    \n    if (start >= end) errors.push(\"start_time must be before end_time\");\n    \n    // Duration Logic check (0 duration)\n    if ((end - start) <= 0) errors.push(\"Duration must be positive\");\n\n    if (input.service_id && !uuidRegex.test(input.service_id)) errors.push(\"Invalid service_id (UUID)\");\n\n    if (errors.length > 0) return [{ json: { error: true, code: \"ERR_VALIDATION\", details: errors, message: \"Validation failed\", status: 400 } }];\n\n    const durationMin = (end - start) / (1000 * 60);\n    return [{ json: { ...input, duration_min: durationMin, status: 'confirmed', error: false } }];\n} catch (e) { return [{ json: { error: true, code: \"ERR_GUARD_CRASH\", message: \"Guard Crash\", status: 500 } }]; }\n"
+        "jsCode": "\ntry {\n    const allItems = $input.all();\n    if (!allItems || allItems.length === 0) return [{ json: { error: true, code: \"ERR_NO_DATA\", message: \"No data received\", status: 400 } }];\n    const root = allItems[0].json || {};\n    const input = root.body ? root.body : root; \n    \n    const errors = [];\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n    if (!input.professional_id || !uuidRegex.test(input.professional_id)) errors.push(\"Invalid professional_id\");\n    if (!input.user_id || !uuidRegex.test(input.user_id)) errors.push(\"Invalid user_id\");\n    \n    const start = new Date(input.start_time);\n    const end = new Date(input.end_time);\n    \n    if (isNaN(start.getTime())) errors.push(\"Invalid start_time format\");\n    if (isNaN(end.getTime())) errors.push(\"Invalid end_time format\");\n    \n    if (start >= end) errors.push(\"start_time must be before end_time\");\n    if ((end - start) <= 0) errors.push(\"Duration must be positive\");\n\n    if (input.service_id && !uuidRegex.test(input.service_id)) errors.push(\"Invalid service_id (UUID)\");\n\n    if (errors.length > 0) return [{ json: { error: true, code: \"ERR_VALIDATION\", details: errors, message: \"Validation failed\", status: 400 } }];\n\n    const durationMin = (end - start) / (1000 * 60);\n    return [{ json: { ...input, duration_min: durationMin, status: 'confirmed', error: false } }];\n} catch (e) { return [{ json: { error: true, code: \"ERR_GUARD_CRASH\", message: \"Guard Crash\", status: 500 } }]; }\n"
       },
       "id": "guard",
       "name": "Guard",
@@ -61,19 +50,6 @@
       "position": [
         450,
         200
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const items = $input.all();\ntry {\n    const logEntry = {\n      timestamp: new Date().toISOString(),\n      itemsCount: items.length,\n      preview: JSON.stringify(items[0]?.json).slice(0, 200)\n    };\n    console.log('[WF-OUTPUT]', JSON.stringify(logEntry));\n} catch(e) {}\nreturn items;"
-      },
-      "id": "log_err1",
-      "name": "Log Output (Error 1)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        650,
-        400
       ]
     },
     {
@@ -151,19 +127,6 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\ntry {\n    const logEntry = {\n      timestamp: new Date().toISOString(),\n      itemsCount: items.length,\n      preview: JSON.stringify(items[0]?.json).slice(0, 200)\n    };\n    console.log('[WF-OUTPUT]', JSON.stringify(logEntry));\n} catch(e) {}\nreturn items;"
-      },
-      "id": "log_err2",
-      "name": "Log Output (Error 2)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1300,
-        300
-      ]
-    },
-    {
-      "parameters": {
         "operation": "executeQuery",
         "query": "SELECT acquire_booking_lock($1, $2) as locked;",
         "options": {
@@ -187,58 +150,68 @@
     },
     {
       "parameters": {
-        "calendar": "primary",
-        "start": "={{ $node['Guard'].json.start_time }}",
-        "end": "={{ $node['Guard'].json.end_time }}",
-        "additionalFields": {
-          "summary": "Reserva AutoAgenda"
-        }
+        "dataType": "boolean",
+        "value1": "={{ $json.locked }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": false,
+              "outputKey": "locked"
+            }
+          ]
+        },
+        "fallbackOutput": 1
       },
-      "id": "gcal_create",
-      "name": "GCal: Create",
-      "type": "n8n-nodes-base.googleCalendar",
+      "id": "check_lock",
+      "name": "Locked?",
+      "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
       "position": [
         1500,
         0
-      ],
-      "credentials": {
-        "googleCalendarApi": {
-          "id": "PLACEHOLDER",
-          "name": "Google Calendar"
-        }
-      },
-      "continueOnFail": true
+      ]
     },
     {
       "parameters": {
-        "operation": "select",
-        "schema": "public",
-        "table": "professionals",
-        "whereClause": {
-          "values": [
-            {
-              "column": "id",
-              "operator": "equal",
-              "value": "={{ $node['Guard'].json.professional_id }}"
-            }
-          ]
+        "respondWith": "json",
+        "responseBody": "={{ { error: true, code: \"ERR_SLOT_LOCKED\", message: \"Slot locked\" } }}",
+        "options": {
+          "responseCode": 409
         }
       },
-      "id": "get_pro",
-      "name": "Get Pro Info",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "id": "resp_locked",
+      "name": "Respond Locked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": "primary",
+        "start": "={{ $node['Guard'].json.start_time }}",
+        "end": "={{ $node['Guard'].json.end_time }}",
+        "additionalFields": {
+          "summary": "Reserva AutoAgenda: {{ $node['Guard'].json.user_id }}"
+        }
+      },
+      "id": "gcal_real",
+      "name": "GCal: Create (Real)",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
       "position": [
         1700,
         0
       ],
       "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
+        "googleCalendarOAuth2": {
+          "id": "GOOGLE_CALENDAR_CRED_ID",
+          "name": "Google Calendar"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -255,11 +228,11 @@
             "start_time": "={{ $node['Guard'].json.start_time }}",
             "end_time": "={{ $node['Guard'].json.end_time }}",
             "status": "confirmed",
-            "gcal_event_id": "={{ $node['GCal: Create'].json.id }}"
+            "gcal_event_id": "={{ $node['GCal: Create (Real)'].json.id }}"
           }
         },
         "options": {
-          "returnFields": "id, start_time, end_time"
+          "returnFields": "id"
         }
       },
       "id": "db_insert",
@@ -281,7 +254,7 @@
     {
       "parameters": {
         "dataType": "boolean",
-        "value1": "={{ !!$json.id }}",
+        "value1": "={{ !!$node['GCal: Create (Real)'].json.id && !!$json.id }}",
         "rules": {
           "rules": [
             {
@@ -292,8 +265,8 @@
         },
         "fallbackOutput": 1
       },
-      "id": "check_db",
-      "name": "DB Success?",
+      "id": "check_saga",
+      "name": "Saga Success?",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
       "position": [
@@ -303,12 +276,26 @@
     },
     {
       "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"success\", booking_id: $json.id } }}"
+      },
+      "id": "respond_ok",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2300,
+        0
+      ]
+    },
+    {
+      "parameters": {
         "operation": "delete",
         "calendar": "primary",
-        "eventId": "={{ $node['GCal: Create'].json.id }}"
+        "eventId": "={{ $node['GCal: Create (Real)'].json.id }}"
       },
       "id": "gcal_rollback",
-      "name": "GCal: Rollback",
+      "name": "GCal: Rollback (Real)",
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1,
       "position": [
@@ -316,82 +303,31 @@
         200
       ],
       "credentials": {
-        "googleCalendarApi": {
-          "id": "PLACEHOLDER",
+        "googleCalendarOAuth2": {
+          "id": "GOOGLE_CALENDAR_CRED_ID",
           "name": "Google Calendar"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\ntry {\n    const logEntry = {\n      timestamp: new Date().toISOString(),\n      itemsCount: items.length,\n      preview: JSON.stringify(items[0]?.json).slice(0, 200)\n    };\n    console.log('[WF-OUTPUT]', JSON.stringify(logEntry));\n} catch(e) {}\nreturn items;"
-      },
-      "id": "log_err_saga",
-      "name": "Log Output (Saga Error)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2500,
-        200
-      ]
-    },
-    {
-      "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { error: true, code: \"ERR_SLOT_TAKEN\", message: \"CONFLICT: Slot taken.\" } }}",
+        "responseBody": "={{ { error: true, code: \"ERR_TRANSACTION\", message: \"Transaction Failed (Rollback executed)\" } }}",
         "options": {
-          "responseCode": 409
+          "responseCode": 500
         }
       },
-      "id": "resp_saga_err",
-      "name": "Respond Saga Error",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        2700,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const items = $input.all();\ntry {\n    const logEntry = {\n      timestamp: new Date().toISOString(),\n      itemsCount: items.length,\n      preview: JSON.stringify(items[0]?.json).slice(0, 200)\n    };\n    console.log('[WF-OUTPUT]', JSON.stringify(logEntry));\n} catch(e) {}\nreturn items;"
-      },
-      "id": "log_ok",
-      "name": "Log Output (Success)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2300,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { status: \"success\", booking_id: $json.id, code: \"MSG_BOOKING_SUCCESS\" } }}"
-      },
-      "id": "respond",
-      "name": "Respond Success",
+      "id": "respond_fail",
+      "name": "Respond Fail",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
         2500,
-        -100
+        200
       ]
     }
   ],
   "connections": {
-    "Execute Workflow Trigger": {
-      "main": [
-        [
-          {
-            "node": "Guard",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Webhook": {
       "main": [
         [
@@ -418,7 +354,7 @@
       "main": [
         [
           {
-            "node": "Log Output (Error 1)",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -426,28 +362,6 @@
         [
           {
             "node": "Get Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Log Output (Error 1)": {
-      "main": [
-        [
-          {
-            "node": "Respond Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Log Output (Error 2)": {
-      "main": [
-        [
-          {
-            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -480,7 +394,7 @@
       "main": [
         [
           {
-            "node": "Log Output (Error 2)",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -498,25 +412,32 @@
       "main": [
         [
           {
-            "node": "GCal: Create",
+            "node": "Locked?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "GCal: Create": {
+    "Locked?": {
       "main": [
         [
           {
-            "node": "Get Pro Info",
+            "node": "Respond Locked",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GCal: Create (Real)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Pro Info": {
+    "GCal: Create (Real)": {
       "main": [
         [
           {
@@ -531,58 +452,36 @@
       "main": [
         [
           {
-            "node": "DB Success?",
+            "node": "Saga Success?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB Success?": {
+    "Saga Success?": {
       "main": [
         [
           {
-            "node": "Log Output (Success)",
+            "node": "Respond Success",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "GCal: Rollback",
+            "node": "GCal: Rollback (Real)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "GCal: Rollback": {
+    "GCal: Rollback (Real)": {
       "main": [
         [
           {
-            "node": "Log Output (Saga Error)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Log Output (Saga Error)": {
-      "main": [
-        [
-          {
-            "node": "Respond Saga Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Log Output (Success)": {
-      "main": [
-        [
-          {
-            "node": "Respond Success",
+            "node": "Respond Fail",
             "type": "main",
             "index": 0
           }

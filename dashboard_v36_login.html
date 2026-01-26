@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoAgenda Admin</title>
+    
+    <!-- Libraries -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <script src="https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.10/locales/es.global.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Config -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+                    colors: { 
+                        dark: { 900: '#0f172a', 800: '#1e293b', 700: '#334155', 600: '#475569' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root { --fc-border-color: #334155; --fc-page-bg-color: #1e293b; --fc-neutral-bg-color: #0f172a; --fc-list-event-hover-bg-color: #334155; }
+        [x-cloak] { display: none !important; }
+        .fc { font-family: 'Inter', sans-serif; color: #e2e8f0; }
+        .fc-theme-standard .fc-scrollgrid, .fc-theme-standard td, .fc-theme-standard th { border-color: #334155; }
+        .fc-col-header-cell-cushion { color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; padding: 10px 0 !important; }
+        .fc-button { background: #334155 !important; border: none !important; color: #e2e8f0 !important; font-weight: 600; }
+        .fc-button-active { background: #8b5cf6 !important; color: white !important; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-dark-900 text-slate-200 h-screen overflow-hidden" x-data="app()">
+
+    <!-- LOGIN -->
+    <div x-show="!isAuthenticated" class="flex items-center justify-center h-full bg-dark-900" x-transition.opacity>
+        <div class="bg-dark-800 p-8 rounded-2xl shadow-2xl border border-dark-700 w-full max-w-md">
+            <div class="flex justify-center mb-6">
+                <div class="w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold text-xl bg-purple-600">A</div>
+            </div>
+            <h2 class="text-2xl font-bold text-center mb-6 text-white" x-text="config.APP_TITLE || 'Admin Login'"></h2>
+            <form @submit.prevent="login">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-1">Username</label>
+                        <input type="text" x-model="credentials.username" class="w-full p-3 bg-dark-900 border border-dark-600 rounded-lg text-white focus:ring-2 focus:ring-purple-500 outline-none" placeholder="admin">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-1">Password</label>
+                        <input type="password" x-model="credentials.password" class="w-full p-3 bg-dark-900 border border-dark-600 rounded-lg text-white focus:ring-2 focus:ring-purple-500 outline-none" placeholder="••••••">
+                    </div>
+                </div>
+                <div class="mt-6">
+                    <button type="submit" class="w-full text-white font-bold py-3 rounded-lg bg-purple-600 hover:bg-purple-500 transition disabled:opacity-50" :disabled="loading">
+                        <span x-show="!loading">Sign In</span>
+                        <span x-show="loading" class="animate-pulse">Verifying...</span>
+                    </button>
+                </div>
+                <p x-show="loginError" class="text-red-400 text-sm text-center mt-4" x-text="loginError"></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div x-show="isAuthenticated" class="flex h-full flex-col" x-cloak>
+        <header class="bg-dark-800 border-b border-dark-700 h-16 flex items-center justify-between px-6 z-30">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 rounded flex items-center justify-center text-white font-bold bg-purple-600">A</div>
+                <span class="font-bold text-lg text-slate-100" x-text="config.APP_TITLE"></span>
+            </div>
+            <div class="flex space-x-1 bg-dark-900 p-1 rounded-lg border border-dark-700">
+                <button @click="activeTab = 'dashboard'" :class="activeTab === 'dashboard' ? 'bg-dark-700 text-white' : 'text-slate-400'" class="px-4 py-1.5 text-sm font-medium rounded-md transition-all">Dashboard</button>
+                <button @click="activeTab = 'config'" :class="activeTab === 'config' ? 'bg-dark-700 text-white' : 'text-slate-400'" class="px-4 py-1.5 text-sm font-medium rounded-md transition-all">Config</button>
+            </div>
+            <button @click="logout" class="text-sm text-red-400 hover:text-red-300 font-medium">Exit</button>
+        </header>
+
+        <main class="flex-1 overflow-hidden relative bg-dark-900">
+            <!-- DASHBOARD TAB -->
+            <div x-show="activeTab === 'dashboard'" class="h-full flex flex-col p-6 space-y-6 overflow-y-auto">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="bg-dark-800 p-5 rounded-xl border border-dark-700 shadow-lg">
+                        <p class="text-xs font-bold text-slate-400 uppercase">Bookings Today</p>
+                        <h3 class="text-3xl font-mono font-bold text-white" x-text="metrics.todayBookings || 0">--</h3>
+                    </div>
+                    <div class="bg-dark-800 p-5 rounded-xl border border-dark-700 shadow-lg">
+                        <p class="text-xs font-bold text-slate-400 uppercase">Total Users</p>
+                        <h3 class="text-3xl font-mono font-bold text-emerald-400" x-text="metrics.totalUsers || 0">--</h3>
+                    </div>
+                    <div class="bg-dark-800 p-5 rounded-xl border border-dark-700 shadow-lg">
+                        <p class="text-xs font-bold text-slate-400 uppercase">Weekly Load</p>
+                        <h3 class="text-3xl font-mono font-bold text-purple-400" x-text="(metrics.occupancy || 0) + '%'">--%</h3>
+                    </div>
+                </div>
+                <div class="flex-1 bg-dark-800 rounded-xl shadow-lg border border-dark-700 p-4 min-h-[500px]">
+                    <div id="calendar" class="h-full"></div>
+                </div>
+            </div>
+
+            <!-- CONFIG TAB -->
+            <div x-show="activeTab === 'config'" class="h-full p-6 overflow-y-auto max-w-5xl mx-auto">
+                <form @submit.prevent="saveConfig" class="space-y-6">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="bg-dark-800 p-6 rounded-xl border border-dark-700">
+                            <h3 class="text-sm font-bold text-blue-400 uppercase mb-4">Schedule</h3>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div><label class="block text-xs font-bold text-slate-500 mb-1">Start</label><input type="number" x-model.number="config.SCHEDULE_START_HOUR" class="w-full bg-dark-900 border border-dark-600 rounded p-2 text-white"></div>
+                                <div><label class="block text-xs font-bold text-slate-500 mb-1">End</label><input type="number" x-model.number="config.SCHEDULE_END_HOUR" class="w-full bg-dark-900 border border-dark-600 rounded p-2 text-white"></div>
+                            </div>
+                        </div>
+                        <div class="bg-dark-800 p-6 rounded-xl border border-dark-700">
+                            <h3 class="text-sm font-bold text-purple-400 uppercase mb-4">Branding</h3>
+                            <div><label class="block text-xs font-bold text-slate-500 mb-1">Title</label><input type="text" x-model="config.APP_TITLE" class="w-full bg-dark-900 border border-dark-600 rounded p-2 text-white"></div>
+                        </div>
+                    </div>
+                    <button type="submit" class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-8 rounded-xl shadow-lg">Save</button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('app', () => ({
+                isAuthenticated: false,
+                activeTab: 'dashboard',
+                credentials: { username: '', password: '' },
+                token: '',
+                loading: false,
+                loginError: '',
+                config: {},
+                metrics: {},
+                calendar: null,
+                apiBase: window.location.origin + '/webhook',
+
+                init() {
+                    this.$watch('activeTab', val => { if(val === 'dashboard') setTimeout(() => this.initCalendar(), 100); });
+                },
+
+                async login() {
+                    this.loading = true;
+                    this.loginError = '';
+                    try {
+                        const res = await fetch(`${this.apiBase}/api/login-v3`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.credentials)
+                        });
+                        
+                        const data = await res.json();
+                        
+                        if (res.ok && data.success) {
+                            this.token = data.token;
+                            this.isAuthenticated = true;
+                            this.$nextTick(() => this.loadData());
+                        } else {
+                            this.loginError = data.message || "Invalid credentials";
+                        }
+                    } catch(e) { 
+                        this.loginError = "Connection error"; 
+                    }
+                    this.loading = false;
+                },
+
+                logout() { 
+                    this.token = ''; 
+                    this.credentials = { username: '', password: '' };
+                    this.isAuthenticated = false; 
+                },
+
+                async loadData() {
+                    try {
+                        // Use the obtained token for subsequent requests
+                        const res = await fetch(`${this.apiBase}/api/stats-v3`, { headers: { 'Authorization': `Bearer ${this.token}` } });
+                        if (!res.ok) throw new Error('Auth failed');
+                        const data = await res.json();
+                        this.config = data.config || {};
+                        this.metrics = data.stats || {};
+                        if (this.activeTab === 'dashboard') this.initCalendar();
+                    } catch(e) { this.logout(); }
+                },
+
+                initCalendar() {
+                    const el = document.getElementById('calendar');
+                    if (!el || this.calendar) return;
+                    this.calendar = new FullCalendar.Calendar(el, {
+                        initialView: 'timeGridWeek',
+                        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek' },
+                        locale: 'es',
+                        timeZone: this.config.TIMEZONE || 'America/Santiago',
+                        slotMinTime: (this.config.SCHEDULE_START_HOUR || 9) + ':00:00',
+                        slotMaxTime: (this.config.SCHEDULE_END_HOUR || 18) + ':00:00',
+                        height: '100%',
+                        events: async (info, success) => {
+                            try {
+                                const res = await fetch(`${this.apiBase}/api/calendar-v3?start=${info.startStr}&end=${info.endStr}`, {
+                                    headers: { 'Authorization': `Bearer ${this.token}` }
+                                });
+                                const data = await res.json();
+                                success(data.events.map(e => ({
+                                    title: e.title, start: e.start, end: e.end,
+                                    color: e.status === 'confirmed' ? '#10b981' : '#ef4444'
+                                })));
+                            } catch(e) {}
+                        }
+                    });
+                    this.calendar.render();
+                },
+
+                async saveConfig() {
+                    await fetch(`${this.apiBase}/api/config-v3`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.config)
+                    });
+                    alert("Saved!");
+                    this.loadData();
+                }
+            }));
+        });
+    </script>
+</body>
+</html>

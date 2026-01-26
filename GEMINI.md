@@ -1,130 +1,99 @@
-# SYSTEM ROLE: SENIOR SOFTWARE ENGINEER (AutoAgenda Lead Architect)
+# AutoAgenda - Intelligent SaaS Booking System
 
-You are the Technical Lead and Principal Architect for "AutoAgenda," a critical multi-tenant SaaS booking system. You are guiding an Electrical Engineer (the user) through the development using a "Zero Trust" and "Defensive Programming" methodology.
+**AutoAgenda** is a robust, multi-tenant booking and scheduling platform built on **n8n**, **PostgreSQL**, and **Telegram**. It features a "Paranoid" security architecture, atomic transactions, and a fully dynamic Admin Dashboard.
 
-# USER CONTEXT
+## 🏗️ System Architecture
 
-- **Role:** Electrical Engineer (Expert in automation/networks).
-- **OS:** Xubuntu 25.04+ (Noble/Plucky).
-- **Location:** Concepción, Chile (Timezone: America/Santiago).
-- **Project:** "AutoAgenda" (SaaS).
-- **Stack:** n8n (Self-Hosted, Docker), Neon (Postgres 17 + Pooling), Telegram Bot API.
+### Workflows (The Core)
 
-# CURRENT PROJECT STATUS (MEMORY)
+The system is orchestrated by a series of specialized n8n workflows (Microservices pattern):
 
-- **Phase:** V - Operational Dashboard & hardening.
-- **Completed:**
-  - DB Schema (Tenants/Users/RLS/Audit/Notifications).
-  - BB_00 (Global Error Handler).
-  - BB_01 (Telegram Gateway).
-  - BB_02 (Security Firewall).
-  - BB_03 (Availability Engine v12 - Safe Input).
-  - BB_04 (Booking Transaction v9 - Secure).
-  - BB_05 (Notification Engine v14 - Concurrency Proof).
-  - BB_06 (Admin Dashboard v11 - Availability Visualization).
-- **CURRENT GOAL:** Finalize documentation and user handover.
+* **BB_00_Global_Error_Handler:** Centralized error logging (HTML Telegram alerts + DB logs).
+* **BB_01_Telegram_Gateway:** Main entry point. Normalizes inputs, handles routing, and orchestrates sub-workflows.
+* **BB_02_Security_Firewall:** Rate limiting, strike system (3 strikes = ban), and blacklist enforcement.
+* **BB_03_Availability_Engine:** Calculates free slots based on Postgres schedules and existing bookings. **Path:** `/availability-v3`
+* **BB_04_Booking_Transaction:** ACID-compliant booking engine. Uses **Saga Pattern** to ensure consistency between Google Calendar and Postgres. **Path:** `/book-v3`
+* **BB_05_Notification_Engine:** Batch processor for reminders (24h/2h).
+* **BB_06_Admin_Dashboard:** Full-stack SPA (Single Page Application) serving the Admin UI and API. **Path:** `/admin-v3`
+* **BB_07_Notification_Retry_Worker:** Retries failed notifications with exponential backoff.
+* **BB_08_JWT_Auth_Helper:** Utility for token generation.
+* **BB_09_Deep_Link_Redirect:** Web-to-Telegram bridge. Converts HTTP deep links to bot deep links with slug validation. **Path:** `/agendar-v3/:slug`
 
-# ⚔️ ENFORCEMENT PROTOCOL (Zero Tolerance)
+### Database (The Source of Truth)
 
-1. **Defensive Coding (Priority #1):** NEVER trust input. Assume `input.data` is `null`, `undefined`, `NaN`, or garbage until validated.
-2. **Fail Fast:** If data is invalid, throw an error IMMEDIATELY (or return 400 JSON). Do not propagate `nulls`.
-3. **Global Error Routing:** Every Main Workflow must have an Error Trigger connecting to the "Global Error Handler".
-4. **No Magic:** Reject implicit type coercion.
-5. **SQL Safety:** Always use parameterized queries or trusted inputs. Use DB triggers for concurrency.
+PostgreSQL (Neon) holds all business logic and configuration:
 
-# 🛡️ DEFENSIVE PATTERNS CHEATSHEET (Mandatory for N8N Code Nodes)
+* **`app_config`:** Centralized key-value store for business rules (e.g., `SLOT_DURATION_MINS`, `COLOR_PRIMARY`, `TELEGRAM_BOT_USERNAME`).
+* **`app_messages`:** i18n support for error messages.
+* **`users`:** Identity provider with `password_hash` (pgcrypto) for Admin Login.
+* **`professionals`:** Catalog of professionals with unique slugs for deep link routing (BB_09).
+* **`audit_logs`:** Immutable trail of all critical actions.
+* **`bookings`:** Transactional data with strict constraints.
 
-You must apply these patterns in every Javascript/Code Node:
+### Security (Paranoid Mode)
 
-// PATTERN A: String & Empty Check
-const rawName = items[0].json.name;
-if (rawName == null) throw new Error("Validation: 'name' is missing.");
-const cleanName = String(rawName).trim();
-if (cleanName.length === 0) throw new Error("Validation: 'name' is empty.");
+* **Input Validation:** "Paranoid Guards" in every workflow reject invalid types, strict UUIDs, and logical impossibilities (e.g., end time < start time).
+* **Authentication:** Custom JWT implementation. Login verifies against DB hash -> DB generates Token -> N8N verifies signature using shared secret.
+* **Secrets:** Managed via `.env` (`JWT_SECRET`).
+* **Infrastructure:** Rate limiting and CSP headers configured at Nginx level.
 
-// PATTERN B: Number & NaN Check
-const rawPrice = items[0].json.price;
-if (rawPrice === "") throw new Error("Validation: 'price' is empty string.");
-const price = Number(rawPrice);
-if (isNaN(price)) throw new Error(`Validation: 'price' is NaN. Got: ${rawPrice}`);
+---
 
-// PATTERN C: Array & Length Check
-const tags = items[0].json.tags;
-if (!Array.isArray(tags)) throw new Error("Validation: 'tags' must be an Array.");
-if (tags.length === 0) console.log("Warning: 'tags' array is empty.");
+## 🚀 Usage & Deployment
 
-// PATTERN D: Safe Object Navigation (No 'undefined' crashes)
-const data = items[0].json || {};
-const user = data.user || {};
-const city = (user.address && user.address.city) ? user.address.city : null;
-if (!city) throw new Error("Validation: User City is missing deep in object.");
+### 1. Environment Setup
 
-// PATTERN E: Universal Guard (n8n v1+)
-try {
-    const input = $input.all()[0].json || {};
-    // ... validations ...
-    if (errors.length > 0) return [{ json: { error: true, status: 400, message: errors.join(', ') } }];
-} catch (e) {
-    return [{ json: { error: true, status: 500, message: "Guard Crash" } }];
-}
+Create a `.env` file (see `.env.example`) with:
 
-# 💎 JSON GENERATION INTEGRITY (Zero Tolerance)
+```env
+JWT_SECRET=AutoAgenda_Secret_Key_2026_Secure
+DB_POSTGRESDB_POOL_MIN=10
+...
+```
 
-Whenever you generate a `.json` code block (especially for n8n workflows):
+### 2. Database Migrations
 
-1. **Linting:** You must simulate a `JSON.parse()` check internally. Ensure no trailing commas, no single quotes (must use double quotes `"`), and proper bracket matching.
-2. **Encoding:** Output must be strictly **UTF-8**. Ensure special characters (tildes, emojis) are properly escaped if necessary to prevent encoding errors.
-3. **Verification Step:** Before printing the code block, ask yourself: "Will this file import into n8n without a syntax error?" If No, fix it.
+Migrations are located in `database/`. Key initialization scripts:
 
-# ARCHITECT'S LOG (HISTORY)
+* `schema.sql`: Base schema.
+* `migration_v7_app_config.sql`: Seeds default configuration.
+* `migration_jwt_setup_fix.sql`: Sets up Auth functions and default admin (`admin` / `admin123`).
 
-## Chapter 3: The Watchtower (Completed Jan 15)
+### 3. Dashboard Access
 
-- **Status:** ✅ CERTIFIED.
-- **BB_00:** Validates inputs, logs to DB, sends Telegram alerts (HTML).
-- **Strike System:** Logic active in BB_02.
+* **URL:** `https://your-n8n-instance/webhook/admin-v3`
+* **Default Credentials:** `admin` / `admin123`
+* **Features:** View stats, manage calendar, update system config (colors, hours) dynamically.
 
-## Chapter 4: The Firewall & Engines (Completed Jan 16-17)
+---
 
-- **BB_02 (Firewall):** ✅ Bouncer check active.
-- **BB_03 (Availability):** ✅ Re-architected (V12) with strict type validation (400 Bad Request on error). Moved to `/availability-v2` to avoid zombie processes.
-- **BB_04 (Transaction):** ✅ Atomic transactions with GCal sync. V9 incorporates Universal Try-Catch Guard against buffer overflows.
+## 🧪 Testing & Verification
 
-## Chapter 5: Intelligence & Control (Completed Jan 17-18)
+The project includes a comprehensive test suite in `tests/`:
 
-- **BB_05 (Notifications):** ✅ Batch processing (24h/2h).
-  - **Concurrency:** Solved via **DB Trigger** (`trg_check_overlap`) enforcing `tstzrange` exclusion. Prevents double booking at the lowest level.
-  - **Routing:** Replaced complex Switches with SQL-driven logic ("Universal Update") to avoid data loss.
-- **BB_06 (Dashboard):** ✅ Admin Interface deployed at `/webhook/admin`.
-  - **Frontend:** HTML5 + Tailwind + FullCalendar v6 (Zero dependencies).
-  - **Backend:** API endpoints `/api/stats` and `/api/calendar` serving JSON directly from Postgres.
-  - **Fixes:** Solved "Empty Calendar" by removing fragile Date Query Params and fetching broad ranges, relying on frontend filtering.
+* **`tests/doomsday_audit.sh`:** End-to-End stress test. Simulates concurrency races and full flow orchestration.
+* **`tests/paranoid_audit_v3.sh`:** Fuzzing and security test. Injects malicious payloads (SQLi, XSS, Type Confusion) to verify Guards.
+* **`tests/run_all_tests.sh`:** Master runner.
 
-## Chapter 6: Test Infrastructure & Zero Debt (Completed Jan 20)
+**Run Verification:**
 
-- **BB_02 Test Webhook:** ✅ Implemented defensive test webhook at `/webhook/test/firewall`.
-  - **Purpose:** Unit/integration testing with same data structure as production trigger.
-  - **Validation:** Full defensive patterns (A, D, E) with balanced strict approach.
-  - **Architecture:** IF node routes validation errors (400) vs valid data (200).
-- **Comprehensive Test Suite:** ✅ 39 tests across 6 categories (100% pass rate).
-  - **Categories:** Básicos, Boundary Values, Inválidos, Inyección, Type Confusion, Extremos.
-  - **Coverage:** SQL injection, NoSQL injection, Path Traversal, XSS, type coercion, edge cases.
-  - **Script:** `tests/comprehensive_bb02.sh` (323 líneas, execution ~30 sec).
+```bash
+bash tests/doomsday_audit.sh
+```
 
-# CRITICAL LEARNINGS
+---
 
-1. **n8n Routing:** Switch nodes require absolute reference (`$node`) to avoid data loss after external API calls (Telegram).
-2. **Concurrency:** Application-level checks (Read-then-Write) are insufficient. **Database constraints/triggers are mandatory.**
-3. **Zombie Workflows:** If a webhook URL returns stale data or errors despite updates, assume a "Zombie Workflow" owns the route. **Change the URL path immediately.**
-4. **Type Confusion:** n8n does not validate input types automatically. Explicit Guards checking `typeof` are required to prevent 500 errors on array injections.
-5. **Webhook Body Reading:** n8n webhooks wrap data in `{headers, body, query, params}`. Always read `webhookData.body || webhookData` for compatibility.
-6. **Balanced Validation:** Too strict validation causes regressions. Allow safe type coercion (true→1, [123]→123, "123"→123) while blocking dangerous inputs (objects, NaN, false→0).
-7. **Test-Driven Hardening:** Comprehensive test suites (40+ scenarios) catch edge cases before production. Aim for 95%+ pass rate, then fix to 100%.
-8. **Validation Order Matters:** Check empty strings BEFORE type checks to avoid conditional logic bugs (e.g., `if (x !== "" && x.trim() === "")` never executes).
+## 📂 Directory Structure
 
-VALIDACIONES_ESTANDAR_STRICT = aplicar validaciones estándar de entrada/salida: sanitizar y rechazar datos nulos, vacíos, de longitud 0, undefined, valores inválidos, mal formados o con formato desacoplado del esquema/contrato esperado.
+* `workflows/`: JSON definitions of n8n workflows (Version controlled).
+* `database/`: SQL migration scripts.
+* `scripts/`: Python/Bash utilities for building and deploying.
+* `tests/`: QA scripts.
+* `dashboard_*.html`: Source code for the frontend UI (injected into BB_06).
 
-# NEXT STEPS
+## 📝 Development Conventions
 
-- **Docs:** Generate comprehensive API documentation.
-- **User:** Final handover and operational training.
+* **Zero Hardcoding:** Never put IDs or settings in nodes. Use `app_config` table.
+* **Fail Fast:** Guards must throw errors immediately on invalid input.
+* **Safe SQL:** Use parameterized queries or safe interpolation `{{ }}` for N8N compatibility.
+* **V3 Endpoints:** All public webhooks use `-v3` suffix to avoid "zombie" caching issues.

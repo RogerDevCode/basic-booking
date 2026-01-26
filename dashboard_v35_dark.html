@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoAgenda Admin</title>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <script src="https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.10/locales/es.global.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+                    colors: { 
+                        dark: { 900: '#0f172a', 800: '#1e293b', 700: '#334155', 600: '#475569' },
+                        accent: { DEFAULT: '#8b5cf6', hover: '#7c3aed' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root { --fc-border-color: #334155; --fc-page-bg-color: #1e293b; --fc-neutral-bg-color: #0f172a; --fc-list-event-hover-bg-color: #334155; }
+        [x-cloak] { display: none !important; }
+        .fc { font-family: 'Inter', sans-serif; color: #e2e8f0; }
+        .fc-theme-standard .fc-scrollgrid { border-color: #334155; }
+        .fc-theme-standard td, .fc-theme-standard th { border-color: #334155; }
+        .fc-col-header-cell-cushion { color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; padding: 10px 0 !important; }
+        .fc-timegrid-slot-label-cushion { color: #64748b; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+        .fc-button { background: #334155 !important; border: none !important; color: #e2e8f0 !important; text-transform: capitalize; font-weight: 600; box-shadow: none !important; }
+        .fc-button:hover { background: #475569 !important; }
+        .fc-button-active { background: #8b5cf6 !important; color: white !important; }
+        .tab-active { border-bottom: 2px solid #8b5cf6; color: #c4b5fd; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body class="bg-dark-900 text-slate-200 h-screen overflow-hidden" x-data="app()">
+
+    <!-- LOGIN -->
+    <div x-show="!isAuthenticated" class="flex items-center justify-center h-full bg-dark-900" x-transition.opacity>
+        <div class="bg-dark-800 p-8 rounded-2xl shadow-2xl border border-dark-700 w-full max-w-md">
+            <div class="flex justify-center mb-6">
+                <div class="w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold text-xl bg-purple-600 shadow-lg shadow-purple-500/20">A</div>
+            </div>
+            <h2 class="text-2xl font-bold text-center mb-6 text-white tracking-tight" x-text="config.APP_TITLE || 'Admin Portal'"></h2>
+            <form @submit.prevent="login">
+                <div class="relative mb-6">
+                    <input type="password" x-model="tokenInput" class="w-full p-3 bg-dark-900 border border-dark-600 rounded-lg text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition placeholder-slate-500" placeholder="Access Token">
+                </div>
+                <button type="submit" class="w-full text-white font-bold py-3 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition transform active:scale-95 shadow-lg">
+                    <span x-show="!loading">Unlock Dashboard</span>
+                    <span x-show="loading" class="animate-pulse">Verifying...</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div x-show="isAuthenticated" class="flex h-full flex-col" x-cloak>
+        
+        <!-- HEADER -->
+        <header class="bg-dark-800 border-b border-dark-700 h-16 flex items-center justify-between px-6 z-30">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 rounded flex items-center justify-center text-white font-bold bg-purple-600 shadow-lg shadow-purple-500/20">A</div>
+                <span class="font-bold text-lg text-slate-100 tracking-tight" x-text="config.APP_TITLE"></span>
+            </div>
+            <div class="flex space-x-1 bg-dark-900 p-1 rounded-lg border border-dark-700">
+                <button @click="activeTab = 'dashboard'" :class="activeTab === 'dashboard' ? 'bg-dark-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'" class="px-4 py-1.5 text-sm font-medium rounded-md transition-all">Dashboard</button>
+                <button @click="activeTab = 'config'" :class="activeTab === 'config' ? 'bg-dark-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'" class="px-4 py-1.5 text-sm font-medium rounded-md transition-all">Settings</button>
+            </div>
+            <button @click="logout" class="text-sm text-red-400 hover:text-red-300 font-medium transition flex items-center">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                Exit
+            </button>
+        </header>
+
+        <!-- CONTENT -->
+        <main class="flex-1 overflow-hidden relative bg-dark-900">
+            
+            <!-- TAB: DASHBOARD -->
+            <div x-show="activeTab === 'dashboard'" class="h-full flex flex-col p-6 space-y-6 overflow-y-auto">
+                <!-- KPI CARDS -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="bg-dark-800 p-5 rounded-xl border border-dark-700 shadow-lg relative overflow-hidden group">
+                        <div class="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition"><svg class="w-16 h-16 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" /><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd" /></svg></div>
+                        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Bookings Today</p>
+                        <h3 class="text-3xl font-mono font-bold text-white" x-text="metrics.todayBookings">--</h3>
+                    </div>
+                    <div class="bg-dark-800 p-5 rounded-xl border border-dark-700 shadow-lg relative overflow-hidden group">
+                        <div class="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition"><svg class="w-16 h-16 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" /></svg></div>
+                        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Users</p>
+                        <h3 class="text-3xl font-mono font-bold text-emerald-400" x-text="metrics.totalUsers">--</h3>
+                    </div>
+                    <div class="bg-dark-800 p-5 rounded-xl border border-dark-700 shadow-lg relative overflow-hidden group">
+                        <div class="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition"><svg class="w-16 h-16 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clip-rule="evenodd" /></svg></div>
+                        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Weekly Load</p>
+                        <h3 class="text-3xl font-mono font-bold text-purple-400" x-text="metrics.occupancy + '%'">--%</h3>
+                        <div class="w-full bg-dark-700 rounded-full h-1.5 mt-3 overflow-hidden">
+                            <div class="bg-purple-500 h-1.5 rounded-full transition-all duration-1000" :style="{ width: metrics.occupancy + '%' }"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CALENDAR -->
+                <div class="flex-1 bg-dark-800 rounded-xl shadow-lg border border-dark-700 p-4 min-h-[500px]">
+                    <div id="calendar" class="h-full"></div>
+                </div>
+            </div>
+
+            <!-- TAB: CONFIG -->
+            <div x-show="activeTab === 'config'" class="h-full p-6 overflow-y-auto max-w-5xl mx-auto">
+                <div class="flex items-center justify-between mb-8">
+                    <h2 class="text-2xl font-bold text-white tracking-tight">System Configuration</h2>
+                    <div class="text-xs font-mono text-slate-500">v35.0-DARK</div>
+                </div>
+                
+                <form @submit.prevent="saveConfig" class="space-y-6">
+                    
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- CALENDAR -->
+                        <div class="bg-dark-800 p-6 rounded-xl border border-dark-700 shadow-md">
+                            <h3 class="text-sm font-bold text-blue-400 uppercase tracking-wider mb-4 flex items-center"><svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> Schedule</h3>
+                            <div class="space-y-4">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div><label class="label">Start (H)</label><input type="number" x-model.number="config.SCHEDULE_START_HOUR" class="input"></div>
+                                    <div><label class="label">End (H)</label><input type="number" x-model.number="config.SCHEDULE_END_HOUR" class="input"></div>
+                                </div>
+                                <div><label class="label">Slot Duration (Min)</label><input type="number" x-model.number="config.SLOT_DURATION_MINS" class="input"></div>
+                                <div><label class="label">Timezone</label><input type="text" x-model="config.TIMEZONE" class="input font-mono text-xs"></div>
+                            </div>
+                        </div>
+
+                        <!-- RULES -->
+                        <div class="bg-dark-800 p-6 rounded-xl border border-dark-700 shadow-md">
+                            <h3 class="text-sm font-bold text-purple-400 uppercase tracking-wider mb-4 flex items-center"><svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Rules</h3>
+                            <div class="space-y-4">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div><label class="label">Min Notice (H)</label><input type="number" x-model.number="config.BOOKING_MIN_NOTICE_HOURS" class="input"></div>
+                                    <div><label class="label">Max Future (D)</label><input type="number" x-model.number="config.BOOKING_MAX_DAYS_IN_ADVANCE" class="input"></div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div><label class="label">Min Duration</label><input type="number" x-model.number="config.MIN_DURATION_MIN" class="input"></div>
+                                    <div><label class="label">Max Duration</label><input type="number" x-model.number="config.MAX_DURATION_MIN" class="input"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BRANDING -->
+                    <div class="bg-dark-800 p-6 rounded-xl border border-dark-700 shadow-md">
+                        <h3 class="text-sm font-bold text-pink-400 uppercase tracking-wider mb-4 flex items-center"><svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path></svg> Branding</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div><label class="label">App Title</label><input type="text" x-model="config.APP_TITLE" class="input"></div>
+                            <div>
+                                <label class="label">Accent Color</label>
+                                <div class="flex items-center space-x-3 mt-1">
+                                    <input type="color" x-model="config.COLOR_PRIMARY" class="w-10 h-10 rounded border-none cursor-pointer bg-transparent">
+                                    <span class="text-xs font-mono text-slate-400" x-text="config.COLOR_PRIMARY"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sticky bottom-6 flex justify-end">
+                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-8 rounded-xl shadow-lg shadow-indigo-500/20 transition transform hover:-translate-y-0.5 active:translate-y-0">
+                            <span x-show="!saving">Save Configuration</span>
+                            <span x-show="saving" class="flex items-center"><svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Saving...</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+        </main>
+    </div>
+
+    <style>
+        .label { display: block; font-size: 0.7rem; font-weight: 700; color: #94a3b8; margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .input { width: 100%; background-color: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 0.6rem; border-radius: 0.5rem; font-size: 0.9rem; transition: all 0.2s; }
+        .input:focus { outline: none; border-color: #8b5cf6; ring: 1px solid #8b5cf6; background-color: #1e293b; }
+    </style>
+
+    <script>
+        function app() {
+            return {
+                isAuthenticated: false,
+                activeTab: 'dashboard',
+                tokenInput: '',
+                loading: false, saving: false,
+                config: {}, metrics: {},
+                calendar: null,
+                apiBase: window.location.origin + '/webhook',
+
+                init() {
+                    if (localStorage.getItem('admin_token')) {
+                        this.isAuthenticated = true;
+                        this.$nextTick(() => this.loadData());
+                    }
+                },
+
+                async login() {
+                    this.loading = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}/api/stats-v3`, { headers: { 'Authorization': `Bearer ${this.tokenInput}` } });
+                        if (res.ok) {
+                            localStorage.setItem('admin_token', this.tokenInput);
+                            this.isAuthenticated = true;
+                            this.$nextTick(() => this.loadData());
+                        } else alert("Token inválido");
+                    } catch(e) { alert("Error de conexión"); }
+                    this.loading = false;
+                },
+
+                logout() { localStorage.removeItem('admin_token'); this.isAuthenticated = false; },
+
+                async loadData() {
+                    try {
+                        const res = await fetch(`${this.apiBase}/api/stats-v3`, { headers: { 'Authorization': `Bearer ${localStorage.getItem('admin_token')}` } });
+                        const data = await res.json();
+                        this.config = data.config || {};
+                        this.metrics = data.stats || {};
+                        
+                        // Dynamic Colors (Optional override)
+                        if(this.config.COLOR_PRIMARY) {
+                            document.documentElement.style.setProperty('--color-primary', this.config.COLOR_PRIMARY);
+                        }
+                        
+                        if (this.activeTab === 'dashboard') this.initCalendar();
+                        
+                    } catch(e) { console.error(e); }
+                },
+
+                initCalendar() {
+                    const el = document.getElementById('calendar');
+                    if (!el || this.calendar) return;
+                    this.calendar = new FullCalendar.Calendar(el, {
+                        initialView: 'timeGridWeek',
+                        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek' },
+                        locale: 'es',
+                        timeZone: this.config.TIMEZONE || 'America/Santiago',
+                        slotMinTime: (this.config.SCHEDULE_START_HOUR || 9) + ':00:00',
+                        slotMaxTime: (this.config.SCHEDULE_END_HOUR || 18) + ':00:00',
+                        height: '100%',
+                        events: async (info, success) => {
+                            const res = await fetch(`${this.apiBase}/api/calendar-v3?start=${info.startStr}&end=${info.endStr}`, {
+                                headers: { 'Authorization': `Bearer ${localStorage.getItem('admin_token')}` }
+                            });
+                            const data = await res.json();
+                            success(data.events.map(e => ({
+                                title: e.title, start: e.start, end: e.end,
+                                color: e.status === 'confirmed' ? '#10b981' : '#ef4444',
+                                textColor: '#ffffff'
+                            })));
+                        }
+                    });
+                    this.calendar.render();
+                },
+
+                async saveConfig() {
+                    this.saving = true;
+                    await fetch(`${this.apiBase}/api/config-v3`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${localStorage.getItem('admin_token')}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.config)
+                    });
+                    this.saving = false;
+                    this.loadData();
+                },
+                
+                $watch('activeTab', val => { if(val === 'dashboard') setTimeout(() => this.initCalendar(), 100); })
+            }
+        }
+    </script>
+</body>
+</html>

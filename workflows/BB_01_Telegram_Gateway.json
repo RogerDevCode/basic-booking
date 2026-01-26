@@ -18,10 +18,10 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst input = items[0].json;\nconst body = input.body;\nif (!body) return [{ json: { error: true, message: \"No body\" } }];\nconst message = body.message || body.channel_post;\nconst chatId = message?.chat?.id;\nconst text = message?.text || \"\";\nif (!chatId) return [{ json: { error: true, message: \"No chat ID\" } }];\nreturn [{ json: { chatId: chatId, text: text, firstName: message?.from?.first_name || \"User\", type: \"text\" } }];\n"
+        "jsCode": "const input = items[0].json; const body = input.body; if (!body) return [{ json: { error: true } }]; const message = body.message || body.channel_post; const chatId = message?.chat?.id; const text = message?.text || ''; if (!chatId) return [{ json: { error: true } }]; return [{ json: { chatId, text, firstName: message?.from?.first_name || 'User' } }];"
       },
       "id": "guard",
-      "name": "Guard & Normalize",
+      "name": "Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -31,34 +31,14 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT public.get_tenant_config_json('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')"
+        "jsCode": "\nconst text = $json.text;\nlet action = \"unknown\";\nlet slug = null;\n\n// Clean Parser: Detects /start <slug>\nif (text.startsWith(\"/start \") && text.length > 7) {\n    action = \"set_context\";\n    slug = text.replace(\"/start \", \"\").trim();\n} else if (text.startsWith(\"/book\")) {\n    action = \"book\";\n} else if (text.startsWith(\"/list\")) {\n    action = \"list\";\n} else if (text.startsWith(\"/help\")) {\n    action = \"help\";\n}\n\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst dateStr = tomorrow.toISOString().split('T')[0];\n\nreturn [{ json: { ...$json, action, slug, target_date: dateStr } }];\n"
       },
-      "id": "get_conf",
-      "name": "Get Config",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        400,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst configItems = $items(\"Get Config\");\nconst config = configItems.length > 0 ? configItems[0].json.get_tenant_config_json : {};\nconst defaultPro = config.DEFAULT_PROFESSIONAL_ID || \"2eebc9bc-c2f8-46f8-9e78-7da0909fcca4\";\nconst defaultSrv = config.DEFAULT_SERVICE_ID || \"a7a019cb-3442-4f57-8877-1b04a1749c01\";\nconst input = $input.all()[0].json;\nlet action = \"unknown\";\nif (input.text.startsWith(\"/start\")) action = \"start\";\nelse if (input.text.startsWith(\"/book\")) action = \"book\";\nelse if (input.text.startsWith(\"/help\")) action = \"help\";\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst dateStr = tomorrow.toISOString().split('T')[0];\nreturn [{\n    json: { \n        ...input, \n        action: action, \n        target_pro: defaultPro, \n        target_srv: defaultSrv, \n        target_date: dateStr, \n        user: { telegram_id: input.chatId }, \n        routing: { intent: action } \n    }\n}];\n"
-      },
-      "id": "adapter",
-      "name": "Adapter",
+      "id": "analyze",
+      "name": "Analyze Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        600,
+        400,
         0
       ]
     },
@@ -69,12 +49,16 @@
         "rules": {
           "rules": [
             {
+              "value2": "set_context",
+              "outputKey": "set_context"
+            },
+            {
               "value2": "book",
               "outputKey": "book"
             },
             {
-              "value2": "start",
-              "outputKey": "start"
+              "value2": "list",
+              "outputKey": "list"
             }
           ]
         }
@@ -84,56 +68,120 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
       "position": [
-        800,
+        600,
         0
       ]
     },
     {
       "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "BB_02_Security_Firewall",
-          "mode": "list",
-          "cachedResultName": "BB_02_Security_Firewall"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "user": "={{ { telegram_id: $json.chatId } }}",
-            "routing": "={{ { intent: $json.action } }}"
+        "operation": "executeQuery",
+        "query": "WITH pro AS (SELECT id, name FROM public.professionals WHERE slug = $2) UPDATE public.users SET last_selected_professional_id = pro.id FROM pro WHERE telegram_id = $1 RETURNING pro.name as doctor_name;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.chatId }}"
+              },
+              {
+                "value": "={{ $json.slug }}"
+              }
+            ]
           }
         }
       },
-      "id": "exec_fw",
-      "name": "Call 'BB_02_Security_Firewall'",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
+      "id": "db_set",
+      "name": "DB: Set Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
       "position": [
-        1000,
-        100
+        850,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'success', message: '\u2705 Seleccionado: ' + ($json.doctor_name || 'Desconocido') } }}"
+      },
+      "id": "resp_set",
+      "name": "Respond Set",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -200
       ]
     },
     {
       "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.last_selected_professional_id, p.name as doctor_name FROM public.users u LEFT JOIN public.professionals p ON u.last_selected_professional_id = p.id WHERE u.telegram_id = $1;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.chatId }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "db_get",
+      "name": "DB: Get Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        850,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
         "dataType": "boolean",
-        "value1": "={{ $json.success }}",
+        "value1": "={{ !!$json.last_selected_professional_id }}",
         "rules": {
           "rules": [
             {
               "value2": true,
-              "outputKey": "authorized"
+              "outputKey": "has_ctx"
             }
           ]
         },
         "fallbackOutput": 1
       },
-      "id": "check_fw",
-      "name": "Authorized?",
+      "id": "check_ctx",
+      "name": "Has Doctor?",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
       "position": [
-        1250,
+        1100,
         100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: true, message: '\u26a0\ufe0f Primero selecciona un doctor con /list' } }}"
+      },
+      "id": "resp_no_ctx",
+      "name": "Respond No Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1350,
+        250
       ]
     },
     {
@@ -147,86 +195,65 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "professional_id": "={{ $node['Adapter'].json.target_pro }}",
-            "service_id": "={{ $node['Adapter'].json.target_srv }}",
-            "date": "={{ $node['Adapter'].json.target_date }}"
+            "professional_id": "={{ $json.last_selected_professional_id }}",
+            "date": "={{ $node['Analyze Intent'].json.target_date }}"
           }
         }
       },
       "id": "exec_avail",
-      "name": "Call 'BB_03_Availability_Engine'",
+      "name": "Call 'BB_03'",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1500,
-        100
-      ]
-    },
-    {
-      "parameters": {
-        "content": "Slots: {{ $json.slots ? $json.slots.length : 0 }} available."
-      },
-      "id": "resp_slots",
-      "name": "Msg: Slots",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 1,
-      "position": [
-        1750,
-        100
+        1350,
+        50
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}"
+        "responseBody": "={{ { result: 'Disponibilidad para ' + $node['DB: Get Context'].json.doctor_name, slots: $json.slots } }}"
       },
-      "id": "respond_slots",
+      "id": "resp_slots",
       "name": "Respond Slots",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1950,
-        100
+        1600,
+        50
       ]
     },
     {
       "parameters": {
-        "content": "Welcome! Use /book to check slots."
+        "operation": "executeQuery",
+        "query": "SELECT name, slug FROM public.professionals WHERE deleted_at IS NULL;"
       },
-      "id": "resp_start",
-      "name": "Msg: Start",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 1,
+      "id": "db_list",
+      "name": "DB: List Professionals",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
       "position": [
-        1000,
-        -100
-      ]
+        850,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}"
+        "jsCode": "const items = $input.all(); const list = items.map(i => `\u2022 ${i.json.name}: /start ${i.json.slug}`).join('\n'); return [{ json: { message: '\ud83d\udc68\u200d\u2695\ufe0f Doctores disponibles:\n' + list } }];"
       },
-      "id": "respond_start",
-      "name": "Respond Start",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
+      "id": "fmt_list",
+      "name": "Format List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        1200,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "content": "Access Denied."
-      },
-      "id": "resp_block",
-      "name": "Msg: Blocked",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 1,
-      "position": [
-        1500,
-        300
+        1100,
+        400
       ]
     },
     {
@@ -234,13 +261,13 @@
         "respondWith": "json",
         "responseBody": "={{ $json }}"
       },
-      "id": "respond_block",
-      "name": "Respond Blocked",
+      "id": "resp_list",
+      "name": "Respond List",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1700,
-        300
+        1350,
+        400
       ]
     }
   ],
@@ -249,36 +276,25 @@
       "main": [
         [
           {
-            "node": "Guard & Normalize",
+            "node": "Guard",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard & Normalize": {
+    "Guard": {
       "main": [
         [
           {
-            "node": "Get Config",
+            "node": "Analyze Intent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Config": {
-      "main": [
-        [
-          {
-            "node": "Adapter",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Adapter": {
+    "Analyze Intent": {
       "main": [
         [
           {
@@ -293,72 +309,68 @@
       "main": [
         [
           {
-            "node": "Call 'BB_02_Security_Firewall'",
+            "node": "DB: Set Context",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Msg: Start",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Msg: Start": {
-      "main": [
-        [
-          {
-            "node": "Respond Start",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call 'BB_02_Security_Firewall'": {
-      "main": [
-        [
-          {
-            "node": "Authorized?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Authorized?": {
-      "main": [
-        [
-          {
-            "node": "Call 'BB_03_Availability_Engine'",
+            "node": "DB: Get Context",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Msg: Blocked",
+            "node": "DB: List Professionals",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Call 'BB_03_Availability_Engine'": {
+    "DB: Set Context": {
       "main": [
         [
           {
-            "node": "Msg: Slots",
+            "node": "Respond Set",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Msg: Slots": {
+    "DB: Get Context": {
+      "main": [
+        [
+          {
+            "node": "Has Doctor?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Doctor?": {
+      "main": [
+        [
+          {
+            "node": "Call 'BB_03'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'BB_03'": {
       "main": [
         [
           {
@@ -369,11 +381,22 @@
         ]
       ]
     },
-    "Msg: Blocked": {
+    "DB: List Professionals": {
       "main": [
         [
           {
-            "node": "Respond Blocked",
+            "node": "Format List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format List": {
+      "main": [
+        [
+          {
+            "node": "Respond List",
             "type": "main",
             "index": 0
           }

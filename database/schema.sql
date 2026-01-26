@@ -2,9 +2,9 @@
 -- PostgreSQL database dump
 --
 
-\restrict x08O1jZNHALPC7Hh1dqKgybt0mchhfP7te7heGjrSM8U0ZeIagZZpKfL9KtJecv
+\restrict cbK6GjhhF6eaPHfgSKbbtXA6fEUsWuNazvTGpq3C1cu2W3cyg3eM0cDFIT65W1o
 
--- Dumped from database version 17.7 (e429a59)
+-- Dumped from database version 17.7 (bdd1736)
 -- Dumped by pg_dump version 17.7 (Ubuntu 17.7-0ubuntu0.25.10.1)
 
 SET statement_timeout = 0;
@@ -40,6 +40,20 @@ CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 --
 
 COMMENT ON EXTENSION citext IS 'data type for case-insensitive character strings';
+
+
+--
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
@@ -377,6 +391,159 @@ COMMENT ON FUNCTION public.cleanup_old_notifications(p_days_to_keep integer) IS 
 
 
 --
+-- Name: create_admin_user(text, text, uuid, text); Type: FUNCTION; Schema: public; Owner: neondb_owner
+--
+
+CREATE FUNCTION public.create_admin_user(p_username text, p_password text, p_tenant_id uuid DEFAULT 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, p_role text DEFAULT 'admin'::text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+    v_user_id uuid;
+BEGIN
+    INSERT INTO public.admin_users (username, password_hash, tenant_id, role)
+    VALUES (
+        p_username,
+        crypt(p_password, gen_salt('bf')),
+        p_tenant_id,
+        p_role
+    )
+    RETURNING id INTO v_user_id;
+    
+    RETURN v_user_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.create_admin_user(p_username text, p_password text, p_tenant_id uuid, p_role text) OWNER TO neondb_owner;
+
+--
+-- Name: FUNCTION create_admin_user(p_username text, p_password text, p_tenant_id uuid, p_role text); Type: COMMENT; Schema: public; Owner: neondb_owner
+--
+
+COMMENT ON FUNCTION public.create_admin_user(p_username text, p_password text, p_tenant_id uuid, p_role text) IS 'Helper function to create new admin users with hashed passwords.';
+
+
+--
+-- Name: get_config(uuid, text, text); Type: FUNCTION; Schema: public; Owner: neondb_owner
+--
+
+CREATE FUNCTION public.get_config(p_tenant_id uuid, p_key text, p_default text DEFAULT NULL::text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_val text;
+BEGIN
+    SELECT value INTO v_val FROM public.app_config WHERE tenant_id = p_tenant_id AND key = p_key;
+    RETURN COALESCE(v_val, p_default);
+END;
+$$;
+
+
+ALTER FUNCTION public.get_config(p_tenant_id uuid, p_key text, p_default text) OWNER TO neondb_owner;
+
+--
+-- Name: get_message(uuid, text, text); Type: FUNCTION; Schema: public; Owner: neondb_owner
+--
+
+CREATE FUNCTION public.get_message(p_tenant_id uuid, p_code text, p_lang text DEFAULT 'es'::text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_msg text;
+BEGIN
+    SELECT message INTO v_msg
+    FROM app_messages
+    WHERE tenant_id = p_tenant_id AND code = p_code AND lang = p_lang;
+    
+    IF v_msg IS NULL AND p_lang != 'es' THEN
+        SELECT message INTO v_msg
+        FROM app_messages
+        WHERE tenant_id = p_tenant_id AND code = p_code AND lang = 'es';
+    END IF;
+    
+    RETURN COALESCE(v_msg, p_code);
+END;
+$$;
+
+
+ALTER FUNCTION public.get_message(p_tenant_id uuid, p_code text, p_lang text) OWNER TO neondb_owner;
+
+--
+-- Name: get_public_config_json(uuid); Type: FUNCTION; Schema: public; Owner: neondb_owner
+--
+
+CREATE FUNCTION public.get_public_config_json(p_tenant_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_json jsonb;
+BEGIN
+    SELECT jsonb_object_agg(key, 
+        CASE 
+            WHEN type = 'number' THEN value::numeric
+            WHEN type = 'boolean' THEN value::boolean
+            WHEN type = 'json' THEN value::jsonb
+            ELSE value
+        END
+    ) INTO v_json
+    FROM public.app_config
+    WHERE tenant_id = p_tenant_id AND is_public = true;
+    
+    RETURN COALESCE(v_json, '{}'::jsonb);
+END;
+$$;
+
+
+ALTER FUNCTION public.get_public_config_json(p_tenant_id uuid) OWNER TO neondb_owner;
+
+--
+-- Name: get_tenant_config_json(uuid); Type: FUNCTION; Schema: public; Owner: neondb_owner
+--
+
+CREATE FUNCTION public.get_tenant_config_json(p_tenant_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    AS $$
+DECLARE
+    v_legacy jsonb;
+    v_dynamic jsonb;
+    v_merged jsonb;
+BEGIN
+    -- 1. Get Legacy Config
+    SELECT row_to_json(nc)::jsonb INTO v_legacy
+    FROM notification_configs nc
+    WHERE tenant_id = p_tenant_id;
+    
+    -- 2. Get Dynamic Config (Type Safe)
+    SELECT jsonb_object_agg(key, 
+        CASE 
+            WHEN type = 'number' THEN to_jsonb(value::numeric)
+            WHEN type = 'boolean' THEN to_jsonb(value::boolean)
+            WHEN type = 'json' THEN value::jsonb
+            ELSE to_jsonb(value)
+        END
+    ) INTO v_dynamic
+    FROM app_config
+    WHERE tenant_id = p_tenant_id;
+
+    -- 3. Merge
+    v_legacy := COALESCE(v_legacy, '{}'::jsonb);
+    v_dynamic := COALESCE(v_dynamic, '{}'::jsonb);
+    
+    v_merged := v_legacy || v_dynamic;
+    
+    -- 4. Inject Defaults
+    IF (v_merged->>'SLOT_DURATION_MINS') IS NULL THEN
+        v_merged := jsonb_set(v_merged, '{SLOT_DURATION_MINS}', '30');
+    END IF;
+    
+    RETURN v_merged;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_tenant_config_json(p_tenant_id uuid) OWNER TO neondb_owner;
+
+--
 -- Name: mark_notification_failed(uuid, text); Type: FUNCTION; Schema: public; Owner: neondb_owner
 --
 
@@ -591,6 +758,35 @@ $$;
 
 ALTER FUNCTION public.update_updated_at_column() OWNER TO neondb_owner;
 
+--
+-- Name: verify_admin_credentials(text, text); Type: FUNCTION; Schema: public; Owner: neondb_owner
+--
+
+CREATE FUNCTION public.verify_admin_credentials(p_username text, p_password text) RETURNS TABLE(valid boolean, user_id uuid, role public.user_role, tenant_id uuid)
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+    v_user_record record;
+BEGIN
+    SELECT * INTO v_user_record FROM public.users WHERE username = p_username;
+    
+    IF v_user_record IS NULL THEN
+        RETURN QUERY SELECT false, null::uuid, null::public.user_role, null::uuid;
+        RETURN;
+    END IF;
+
+    -- Verify password
+    IF v_user_record.password_hash = crypt(p_password, v_user_record.password_hash) THEN
+         RETURN QUERY SELECT true, v_user_record.id, v_user_record.role, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid;
+    ELSE
+         RETURN QUERY SELECT false, null::uuid, null::public.user_role, null::uuid;
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION public.verify_admin_credentials(p_username text, p_password text) OWNER TO neondb_owner;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -760,6 +956,87 @@ CREATE TABLE neon_auth.verification (
 ALTER TABLE neon_auth.verification OWNER TO neon_auth;
 
 --
+-- Name: admin_sessions; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.admin_sessions (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    user_id uuid NOT NULL,
+    token_hash text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    last_used_at timestamp with time zone DEFAULT now(),
+    is_revoked boolean DEFAULT false
+);
+
+
+ALTER TABLE public.admin_sessions OWNER TO neondb_owner;
+
+--
+-- Name: admin_users; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.admin_users (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    username character varying(50) NOT NULL,
+    password_hash text NOT NULL,
+    tenant_id uuid NOT NULL,
+    role character varying(20) DEFAULT 'admin'::character varying,
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT admin_users_role_check CHECK (((role)::text = ANY ((ARRAY['admin'::character varying, 'superadmin'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.admin_users OWNER TO neondb_owner;
+
+--
+-- Name: TABLE admin_users; Type: COMMENT; Schema: public; Owner: neondb_owner
+--
+
+COMMENT ON TABLE public.admin_users IS 'Admin users for JWT-based authentication to the Admin Dashboard.';
+
+
+--
+-- Name: app_config; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.app_config (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    key character varying(100) NOT NULL,
+    value text NOT NULL,
+    type character varying(20) DEFAULT 'string'::character varying,
+    category character varying(50) DEFAULT 'general'::character varying,
+    description text,
+    is_public boolean DEFAULT false,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT app_config_type_check CHECK (((type)::text = ANY ((ARRAY['string'::character varying, 'number'::character varying, 'boolean'::character varying, 'json'::character varying, 'color'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.app_config OWNER TO neondb_owner;
+
+--
+-- Name: app_messages; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.app_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    code character varying(50) NOT NULL,
+    lang character varying(10) DEFAULT 'es'::character varying NOT NULL,
+    message text NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.app_messages OWNER TO neondb_owner;
+
+--
 -- Name: audit_logs; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
@@ -888,9 +1165,11 @@ CREATE TABLE public.professionals (
     public_booking_enabled boolean DEFAULT true,
     created_at timestamp with time zone DEFAULT now(),
     deleted_at timestamp with time zone,
+    slug text,
     CONSTRAINT check_min_notice_positive CHECK ((min_notice_hours >= 0)),
     CONSTRAINT check_professional_name_not_empty CHECK ((length(TRIM(BOTH FROM name)) > 0)),
-    CONSTRAINT check_slot_duration_positive CHECK ((slot_duration_minutes > 0))
+    CONSTRAINT check_slot_duration_positive CHECK ((slot_duration_minutes > 0)),
+    CONSTRAINT check_slug_format CHECK ((slug ~* '^[a-z0-9-]+$'::text))
 );
 
 
@@ -1037,6 +1316,8 @@ CREATE TABLE public.users (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     deleted_at timestamp with time zone,
+    password_hash text,
+    last_selected_professional_id uuid,
     CONSTRAINT check_rut_format CHECK (((rut IS NULL) OR (rut ~* '^[0-9]+-[0-9kK]$'::text)))
 );
 
@@ -1127,6 +1408,89 @@ COPY neon_auth."user" (id, name, email, "emailVerified", image, "createdAt", "up
 --
 
 COPY neon_auth.verification (id, identifier, value, "expiresAt", "createdAt", "updatedAt") FROM stdin;
+\.
+
+
+--
+-- Data for Name: admin_sessions; Type: TABLE DATA; Schema: public; Owner: neondb_owner
+--
+
+COPY public.admin_sessions (id, user_id, token_hash, expires_at, created_at, last_used_at, is_revoked) FROM stdin;
+\.
+
+
+--
+-- Data for Name: admin_users; Type: TABLE DATA; Schema: public; Owner: neondb_owner
+--
+
+COPY public.admin_users (id, username, password_hash, tenant_id, role, is_active, created_at, updated_at) FROM stdin;
+71aa8d90-86a8-498a-910d-91074f4429be	admin	$2a$06$A3w0bjKgdWJJ8/A.Wx5hM.EREaAbstEkxtV1Zegn282E6FhVM4VPu	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	superadmin	t	2026-01-24 20:24:49.517632+00	2026-01-24 20:24:49.517632+00
+\.
+
+
+--
+-- Data for Name: app_config; Type: TABLE DATA; Schema: public; Owner: neondb_owner
+--
+
+COPY public.app_config (id, tenant_id, key, value, type, category, description, is_public, created_at, updated_at) FROM stdin;
+89d8b452-a433-4b7f-ad5b-3b06072b3e2e	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	CALENDAR_MIN_TIME	07:00:00	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
+a1435e9e-e46b-4beb-a0b8-c1a3e47d09a0	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	CALENDAR_MAX_TIME	21:00:00	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
+15a2944a-d892-4b3d-ae53-ab31ea179227	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	COLOR_PRIMARY_HOVER	#1d4ed8	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+c707aa82-438e-4afc-9989-3b427dbc0020	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	COLOR_SUCCESS	#10b981	color	branding	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
+99e79f48-b9cf-4c9e-9ea7-5ac35a81cb5d	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	COLOR_DANGER	#ef4444	color	branding	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
+7a9afa97-4743-494e-a611-c8cbe5914c4e	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	COLOR_EVENT_CONFIRMED	#dcfce7	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+b43fea76-743b-481b-8e74-54ba537a4eb0	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	COLOR_EVENT_PENDING	#fff7ed	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+ab76a620-58ec-439e-a675-8a07723933b7	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	TIMEZONE	America/Santiago	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+ae1b0424-9da8-42d1-a2f2-ddcb044dd5e5	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	BOOKING_MIN_NOTICE_HOURS	2	number	business	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+408c1b06-4f9b-4d6c-b4be-bec6fb77c485	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	BOOKING_MAX_DAYS_IN_ADVANCE	60	number	rules	Días máximos a futuro para reservar	t	2026-01-23 18:47:03.171944+00	2026-01-23 18:47:03.171944+00
+614d2495-795f-4263-98f8-406c8ceb0c87	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	MIN_DURATION_MIN	15	number	business	\N	t	2026-01-22 18:06:43.27832+00	2026-01-23 18:47:03.171944+00
+b90e80ed-f23b-4a5a-b672-cfa06ce9f076	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	MAX_DURATION_MIN	120	number	business	\N	t	2026-01-22 18:06:43.27832+00	2026-01-23 18:47:03.171944+00
+1ea8a764-1ed5-4664-bda9-a3021ea26b2b	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	NOTIFICATION_MAX_RETRIES	3	number	notifications	\N	f	2026-01-22 19:47:44.609108+00	2026-01-23 18:47:03.171944+00
+c59828ab-d32f-47b2-93fa-d1e94a737417	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	NOTIFICATION_TIMEOUT_MS	10000	number	notifications	Timeout de API Telegram	f	2026-01-23 18:47:03.171944+00	2026-01-23 18:47:03.171944+00
+f60a8412-1a4c-419a-bfa1-1d51882dedd3	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	APP_TITLE	AutoAgenda Admin	string	branding	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+412f0683-4c25-4db3-8c7f-c60b8d7b3cb6	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	COLOR_PRIMARY	#2563eb	color	branding	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+6ac0e180-480a-4861-abe5-327c0542215e	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	DEFAULT_PROFESSIONAL_ID	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	string	business	\N	t	2026-01-22 18:25:56.253054+00	2026-01-23 18:47:03.171944+00
+45a887b5-c1a7-4381-b933-fa6f4f2cf9a2	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	DEFAULT_SERVICE_ID	a7a019cb-3442-4f57-8877-1b04a1749c01	string	business	\N	t	2026-01-22 18:25:56.253054+00	2026-01-23 18:47:03.171944+00
+d3a31e1a-feb5-44b1-9103-a9e4b8435d73	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	COLOR_EVENT_TEXT	#0f172a	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+003006c0-dc55-4093-8ed4-1af37f619730	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	BOOKING_MAX_NOTICE_DAYS	60	number	business	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
+2a3cf121-3013-4c4a-a718-8b0e3f98ad1b	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	DEFAULT_DURATION_MIN	30	number	business	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+b18f62d6-36a6-4874-9b51-3f71ff6d2402	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERROR_ALERT_CHAT_ID	5391760292	string	system	\N	f	2026-01-22 18:25:56.253054+00	2026-01-22 19:47:44.609108+00
+8e206285-12e8-442e-8fff-4f6297f2f008	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	NOTIFICATION_CRON_MINUTES	15	number	notifications	\N	f	2026-01-22 19:47:44.609108+00	2026-01-22 19:47:44.609108+00
+e4cdc31d-f996-44ef-8e63-6edce55cc563	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	RETRY_WORKER_CRON_MINUTES	5	number	notifications	\N	f	2026-01-22 19:47:44.609108+00	2026-01-22 19:47:44.609108+00
+38a205c6-5b9d-4223-aba2-a702aa930786	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	NOTIFICATION_BATCH_LIMIT	50	number	notifications	\N	f	2026-01-22 19:47:44.609108+00	2026-01-22 19:47:44.609108+00
+14dda265-24f1-4042-b918-6afa94ee3989	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	WF_ID_AVAILABILITY_ENGINE	BB_03_Availability_Engine	string	general	\N	f	2026-01-22 21:09:13.096467+00	2026-01-22 21:09:13.096467+00
+920214b9-d67a-4453-9cf7-b548e0865262	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	SCHEDULE_START_HOUR	9	number	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+1eead956-a6e6-40e8-be5c-8bb72c1dee3c	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	SCHEDULE_END_HOUR	18	number	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+17aaca59-e546-4a26-89c4-fa261498109d	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	SCHEDULE_DAYS	[1,2,3,4,5]	json	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+de697b7c-78bd-41ba-930f-2e565cf05965	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	SLOT_DURATION_MINS	30	number	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+\.
+
+
+--
+-- Data for Name: app_messages; Type: TABLE DATA; Schema: public; Owner: neondb_owner
+--
+
+COPY public.app_messages (id, tenant_id, code, lang, message, created_at, updated_at) FROM stdin;
+17730345-1557-448e-ace0-8fba7794e1a2	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	AUTH_MISSING_TOKEN	es	NO AUTORIZADO: Falta token	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+aa7ef49d-7b88-4429-8893-56c1202fd7eb	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	AUTH_INVALID_TOKEN	es	NO AUTORIZADO: Token inválido	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+9cbae254-e0b4-49bc-a8c7-faa9d0bc47f3	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	AUTH_EXPIRED_TOKEN	es	Token expirado	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+02390ea5-b577-46a0-9bdf-e30dfdf035c4	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	AUTH_FORBIDDEN	es	PROHIBIDO: Se requiere rol de admin	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+a35649e5-7988-4bb6-be5c-6f6bf37fbd14	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_INVALID_PRO	es	ID de profesional inválido	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+f029b1a1-a14a-4f30-8652-36bb9c03ba5e	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_INVALID_USER	es	ID de usuario inválido	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
+fcac6ce5-13fd-4759-9cd8-fbe7f4c2deb5	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_INVALID_SRV	es	ID de servicio inválido	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+74e6a2c4-8621-4d0b-aceb-73675e3bebe5	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_INVALID_DATE	es	Fecha inválida	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+abd75d1d-de60-44cc-9aba-5b1d140e450c	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_INVALID_DATE_FORMAT	es	Formato de fecha incorrecto	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
+d287ec6d-48cb-4a00-bf78-8077616bb512	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_INVALID_TIME_RANGE	es	Hora de inicio debe ser anterior al fin	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
+fbd151b1-5b59-441c-8456-fb0b1be18650	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_DURATION_RANGE	es	Duración fuera de rango permitido	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+5d0deb79-3a1f-4e8e-bc6b-07c8cce1ba0e	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_NO_DATA	es	No se recibieron datos	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
+6dd1d20d-bf19-4bd9-ac9b-a85879dd90e1	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_NO_BODY	es	Cuerpo de mensaje vacío	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
+b532c270-deb3-4dc0-83ac-715b4f17e2e7	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_NO_CHAT_ID	es	Falta ID de chat	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
+cadb7b3f-84f3-4dcb-b3f7-8d906b5a8582	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_SERVICE_ID_LENGTH	es	ID de servicio demasiado largo	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
+6241c197-54f4-4d98-9a48-ccbe7b99bbf1	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_SRV_NOT_FOUND	es	Servicio no encontrado	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+1800bcf6-b5a8-4e59-bd27-6cd1cb400d37	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_NO_SCHEDULE	es	No hay horario disponible	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+97a06ae6-9ae0-485c-a353-6e3b478e9c52	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_SLOT_TAKEN	es	CONFLICTO: El horario ya está ocupado	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+df8cff77-c2e2-4a12-be2e-77b1e22f1f07	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	MSG_BOOKING_SUCCESS	es	Reserva procesada exitosamente	2026-01-22 18:27:03.244202+00	2026-01-22 18:27:03.244202+00
+db6b9010-203d-4d51-b278-12367f3bb17e	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	ERR_GCAL_TIMEOUT	es	Error de sincronización con Google Calendar	2026-01-22 19:48:25.274639+00	2026-01-22 19:48:25.274639+00
 \.
 
 
@@ -1302,6 +1666,7 @@ a48a4725-b383-4f11-9c89-c208166e69d1	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	
 e6839086-53b2-4e08-9fbb-b927b5d23723	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	LOGIN_ATTEMPT	{}	\N	123	\N	2026-01-20 23:42:54.993846+00
 ca293dba-a4b3-4f57-aa74-096bfdea18d5	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	LOGIN_ATTEMPT	{"intent": "🔥💯🚀😎👍"}	\N	123	\N	2026-01-20 23:43:02.293142+00
 dd37d93a-e8c4-498f-9606-e0b5fefd0494	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	LOGIN_ATTEMPT	{"intent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}	\N	123	\N	2026-01-20 23:43:17.179753+00
+a2b1497b-1838-42d1-8ec9-126ffaefccd3	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	LOGIN_ATTEMPT	{"intent": "test"}	\N	123	\N	2026-01-24 16:45:41.207954+00
 \.
 
 
@@ -1388,7 +1753,6 @@ c32f3bbe-4344-4160-92af-1b17295e21fa	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	4f4d34
 81b04e1a-ebc9-4bf9-b829-6012d566e730	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	b1e95f01-49b4-423c-b530-b4dc265e9082	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	a7a019cb-3442-4f57-8877-1b04a1749c01	2026-01-25 08:00:00+00	2026-01-25 08:45:00+00	confirmed	\N	COMPLEX_NAME_TEST	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 519869d0-7f28-49ae-a2a7-b1fbf3fcb6bc	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	b1e95f01-49b4-423c-b530-b4dc265e9082	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	a7a019cb-3442-4f57-8877-1b04a1749c01	2026-01-21 08:00:00+00	2026-01-21 08:45:00+00	confirmed	\N	COMPLEX_NAME_TEST	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 e6a86dd7-5146-4347-ba07-723aea2fd513	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	b9f03843-eee6-4607-ac5a-496c6faa9ea1	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	a7a019cb-3442-4f57-8877-1b04a1749c01	2026-04-01 10:00:00+00	2026-04-01 10:30:00+00	confirmed	\N	\N	2026-01-21 20:45:38.3443+00	2026-01-21 20:45:38.3443+00	\N	\N	\N
-590b5e67-c7ca-45e0-b76a-4075ab10cb8a	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	b9f03843-eee6-4607-ac5a-496c6faa9ea1	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	a7a019cb-3442-4f57-8877-1b04a1749c01	2026-03-05 10:00:00+00	2026-03-05 10:30:00+00	confirmed	\N	\N	2026-01-21 22:25:47.332749+00	2026-01-21 22:25:47.332749+00	\N	\N	\N
 \.
 
 
@@ -1413,8 +1777,8 @@ COPY public.notification_queue (id, booking_id, user_id, message, priority, stat
 -- Data for Name: professionals; Type: TABLE DATA; Schema: public; Owner: neondb_owner
 --
 
-COPY public.professionals (id, tenant_id, user_id, name, email, google_calendar_id, slot_duration_minutes, min_notice_hours, public_booking_enabled, created_at, deleted_at) FROM stdin;
-2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	\N	Dr. Roger Auto	dev.n8n.stax@gmail.com	dev.n8n.stax@gmail.com	30	2	t	2026-01-15 14:52:06.081827+00	\N
+COPY public.professionals (id, tenant_id, user_id, name, email, google_calendar_id, slot_duration_minutes, min_notice_hours, public_booking_enabled, created_at, deleted_at, slug) FROM stdin;
+2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	\N	Dr. Roger Auto	dev.n8n.stax@gmail.com	dev.n8n.stax@gmail.com	30	2	t	2026-01-15 14:52:06.081827+00	\N	dr-roger-auto
 \.
 
 
@@ -1547,31 +1911,32 @@ aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	AutoAgenda HQ	hq	{"timezone": "America/Sant
 -- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: neondb_owner
 --
 
-COPY public.users (id, telegram_id, first_name, last_name, username, phone_number, rut, role, language_code, metadata, created_at, updated_at, deleted_at) FROM stdin;
-b9f03843-eee6-4607-ac5a-496c6faa9ea1	5391760292	Roger	Gallegos	\N	\N	11111111-1	admin	en	{"email": "dev.n8n.stax@gmail.com"}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N
-6b991a66-cbb1-4910-9507-5f43fc07983a	999999999	Test Admin	\N	admin_tester	\N	12345678-5	admin	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N
-41ded616-b5c7-44ea-bed2-b9f9135c7320	888888888	Banned User	\N	banned_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00
-c28d963b-4ea0-4861-ac80-9c79cb55370f	777777777	Incomplete User	\N	incomplete_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N
-7b76edda-dd8a-41a1-8391-99bbe2f5fcf1	1000001	Ana	Perez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-ca49f72a-6c1a-47d4-9780-6f0408c11211	1000002	Carlos	Gonzalez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-5f9f9676-93db-4df1-8131-0c4a69bd0c95	1000003	Beatriz	Silva	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-663bfa7a-7341-49c9-b495-9f912b170230	1000004	David	Lopez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-7bf2f8a4-051d-4956-913a-7adc652f0618	1000005	Elena	Diaz	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-4becd89e-11f4-4c4f-ba3a-1eabd7394c39	1000006	Fernando	Martinez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-cbb0be91-868b-4fd0-9786-1d52adc4e1dc	1000007	Gloria	Rodriguez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-0bf4f0c1-aac3-4bfd-80a8-fa9cf150b99a	1000008	Hugo	Sanchez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-e2d55df3-6398-4957-8024-ef7200df3119	1000009	Ines	Fernandez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-0a621361-57a2-4826-aabc-1c5a914f22a7	1000010	Javier	Gomez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N
-988c553b-7051-47cf-bf06-29abcfcf34b3	2000001	María José	Fernández de la Reguera	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-db5f3969-2684-494e-abd8-5e452660cdd6	2000002	José Ángel	O'Connor	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-af1172c7-508b-44bc-a82a-5d368d7fd631	2000003	Jean-Pierre	Núñez y Castillo	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-64e6cb11-989f-44bc-a5e8-07dfb536c1b2	2000004	D'Angelo	Sánchez-Villalobos	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-2cb9bc11-2006-4d43-94b2-ce5e06614f0e	2000005	Xóchitl	García-Márquez	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-3cf62705-6d46-44b0-91b0-42163da9dee2	2000006	Estefanía del Carmen	De la Fuente	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-0323236a-52f0-45c3-b46c-eaf20cc5c934	2000007	Maximilianus	Van der Sar	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-4f4d34d2-c89d-4154-a0a3-95540f523ba3	2000008	Ana-Sofía	Muñoz	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-dc167392-26aa-4006-91cc-7a517e6ee903	2000009	Lúcia	Ibañez	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
-b1e95f01-49b4-423c-b530-b4dc265e9082	2000010	Zoë	Almohávar	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N
+COPY public.users (id, telegram_id, first_name, last_name, username, phone_number, rut, role, language_code, metadata, created_at, updated_at, deleted_at, password_hash, last_selected_professional_id) FROM stdin;
+b9f03843-eee6-4607-ac5a-496c6faa9ea1	5391760292	Roger	Gallegos	\N	\N	11111111-1	admin	en	{"email": "dev.n8n.stax@gmail.com"}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
+6b991a66-cbb1-4910-9507-5f43fc07983a	999999999	Test Admin	\N	admin_tester	\N	12345678-5	admin	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
+41ded616-b5c7-44ea-bed2-b9f9135c7320	888888888	Banned User	\N	banned_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N
+c28d963b-4ea0-4861-ac80-9c79cb55370f	777777777	Incomplete User	\N	incomplete_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
+d5d85414-4c5e-40ca-890d-cb91c93e4095	888777666	System Admin	\N	admin	\N	\N	admin	es	{}	2026-01-24 20:42:41.773789+00	2026-01-24 20:43:20.420308+00	\N	$2a$06$mHxcDiBy1pvl.RUnko.u.uNpsSP29MqlUqyEbPYXgJRWSdNUvfnLm	\N
+7b76edda-dd8a-41a1-8391-99bbe2f5fcf1	1000001	Ana	Perez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+ca49f72a-6c1a-47d4-9780-6f0408c11211	1000002	Carlos	Gonzalez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+5f9f9676-93db-4df1-8131-0c4a69bd0c95	1000003	Beatriz	Silva	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+663bfa7a-7341-49c9-b495-9f912b170230	1000004	David	Lopez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+7bf2f8a4-051d-4956-913a-7adc652f0618	1000005	Elena	Diaz	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+4becd89e-11f4-4c4f-ba3a-1eabd7394c39	1000006	Fernando	Martinez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+cbb0be91-868b-4fd0-9786-1d52adc4e1dc	1000007	Gloria	Rodriguez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+0bf4f0c1-aac3-4bfd-80a8-fa9cf150b99a	1000008	Hugo	Sanchez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+e2d55df3-6398-4957-8024-ef7200df3119	1000009	Ines	Fernandez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+0a621361-57a2-4826-aabc-1c5a914f22a7	1000010	Javier	Gomez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
+988c553b-7051-47cf-bf06-29abcfcf34b3	2000001	María José	Fernández de la Reguera	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+db5f3969-2684-494e-abd8-5e452660cdd6	2000002	José Ángel	O'Connor	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+af1172c7-508b-44bc-a82a-5d368d7fd631	2000003	Jean-Pierre	Núñez y Castillo	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+64e6cb11-989f-44bc-a5e8-07dfb536c1b2	2000004	D'Angelo	Sánchez-Villalobos	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+2cb9bc11-2006-4d43-94b2-ce5e06614f0e	2000005	Xóchitl	García-Márquez	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+3cf62705-6d46-44b0-91b0-42163da9dee2	2000006	Estefanía del Carmen	De la Fuente	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+0323236a-52f0-45c3-b46c-eaf20cc5c934	2000007	Maximilianus	Van der Sar	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+4f4d34d2-c89d-4154-a0a3-95540f523ba3	2000008	Ana-Sofía	Muñoz	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+dc167392-26aa-4006-91cc-7a517e6ee903	2000009	Lúcia	Ibañez	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+b1e95f01-49b4-423c-b530-b4dc265e9082	2000010	Zoë	Almohávar	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 \.
 
 
@@ -1677,6 +2042,54 @@ ALTER TABLE ONLY neon_auth."user"
 
 ALTER TABLE ONLY neon_auth.verification
     ADD CONSTRAINT verification_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: admin_users admin_users_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.admin_users
+    ADD CONSTRAINT admin_users_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: admin_users admin_users_username_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.admin_users
+    ADD CONSTRAINT admin_users_username_key UNIQUE (username);
+
+
+--
+-- Name: app_config app_config_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.app_config
+    ADD CONSTRAINT app_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_config app_config_tenant_id_key_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.app_config
+    ADD CONSTRAINT app_config_tenant_id_key_key UNIQUE (tenant_id, key);
+
+
+--
+-- Name: app_messages app_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.app_messages
+    ADD CONSTRAINT app_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_messages app_messages_tenant_id_code_lang_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.app_messages
+    ADD CONSTRAINT app_messages_tenant_id_code_lang_key UNIQUE (tenant_id, code, lang);
 
 
 --
@@ -1856,6 +2269,76 @@ CREATE INDEX verification_identifier_idx ON neon_auth.verification USING btree (
 
 
 --
+-- Name: idx_admin_sessions_expires_at; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_admin_sessions_expires_at ON public.admin_sessions USING btree (expires_at) WHERE (NOT is_revoked);
+
+
+--
+-- Name: idx_admin_sessions_last_used; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_admin_sessions_last_used ON public.admin_sessions USING btree (last_used_at) WHERE (NOT is_revoked);
+
+
+--
+-- Name: idx_admin_sessions_token_hash; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_admin_sessions_token_hash ON public.admin_sessions USING btree (token_hash) WHERE (NOT is_revoked);
+
+
+--
+-- Name: idx_admin_sessions_user_id; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_admin_sessions_user_id ON public.admin_sessions USING btree (user_id) WHERE (NOT is_revoked);
+
+
+--
+-- Name: idx_admin_users_tenant; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_admin_users_tenant ON public.admin_users USING btree (tenant_id) WHERE (is_active = true);
+
+
+--
+-- Name: idx_admin_users_username; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_admin_users_username ON public.admin_users USING btree (username) WHERE (is_active = true);
+
+
+--
+-- Name: idx_app_config_lookup; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_app_config_lookup ON public.app_config USING btree (tenant_id, key);
+
+
+--
+-- Name: idx_app_config_public; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_app_config_public ON public.app_config USING btree (tenant_id) WHERE (is_public = true);
+
+
+--
+-- Name: idx_app_messages_lookup; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_app_messages_lookup ON public.app_messages USING btree (tenant_id, code, lang);
+
+
+--
+-- Name: idx_audit_logs_timestamp; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_audit_logs_timestamp ON public.audit_logs USING btree ("timestamp" DESC);
+
+
+--
 -- Name: idx_bookings_professional; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -1877,10 +2360,31 @@ CREATE INDEX idx_bookings_range ON public.bookings USING btree (start_time, end_
 
 
 --
+-- Name: idx_bookings_reminder_1; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_bookings_reminder_1 ON public.bookings USING btree (reminder_1_sent_at) WHERE (reminder_1_sent_at IS NULL);
+
+
+--
+-- Name: idx_bookings_reminder_2; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_bookings_reminder_2 ON public.bookings USING btree (reminder_2_sent_at) WHERE (reminder_2_sent_at IS NULL);
+
+
+--
 -- Name: idx_bookings_reminders; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE INDEX idx_bookings_reminders ON public.bookings USING btree (start_time, reminder_1_sent_at, reminder_2_sent_at) WHERE (status = 'confirmed'::public.booking_status);
+
+
+--
+-- Name: idx_bookings_start_time; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_bookings_start_time ON public.bookings USING btree (start_time);
 
 
 --
@@ -1940,6 +2444,13 @@ CREATE INDEX idx_notification_queue_user_id ON public.notification_queue USING b
 
 
 --
+-- Name: idx_professionals_slug; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE UNIQUE INDEX idx_professionals_slug ON public.professionals USING btree (slug) WHERE (deleted_at IS NULL);
+
+
+--
 -- Name: idx_professionals_tenant; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -1993,6 +2504,20 @@ CREATE INDEX idx_users_telegram ON public.users USING btree (telegram_id) WHERE 
 --
 
 CREATE UNIQUE INDEX unique_booking_slot ON public.bookings USING btree (professional_id, start_time) WHERE (status <> 'cancelled'::public.booking_status);
+
+
+--
+-- Name: admin_users trg_admin_users_timestamp; Type: TRIGGER; Schema: public; Owner: neondb_owner
+--
+
+CREATE TRIGGER trg_admin_users_timestamp BEFORE UPDATE ON public.admin_users FOR EACH ROW EXECUTE FUNCTION public.update_notification_queue_timestamp();
+
+
+--
+-- Name: app_config trg_app_config_timestamp; Type: TRIGGER; Schema: public; Owner: neondb_owner
+--
+
+CREATE TRIGGER trg_app_config_timestamp BEFORE UPDATE ON public.app_config FOR EACH ROW EXECUTE FUNCTION public.update_notification_queue_timestamp();
 
 
 --
@@ -2079,6 +2604,14 @@ ALTER TABLE ONLY neon_auth.session
 
 
 --
+-- Name: admin_users admin_users_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.admin_users
+    ADD CONSTRAINT admin_users_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: bookings bookings_professional_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
@@ -2151,6 +2684,14 @@ ALTER TABLE ONLY public.services
 
 
 --
+-- Name: users users_last_selected_professional_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_last_selected_professional_id_fkey FOREIGN KEY (last_selected_professional_id) REFERENCES public.professionals(id);
+
+
+--
 -- Name: bookings Service Access Bookings; Type: POLICY; Schema: public; Owner: neondb_owner
 --
 
@@ -2194,5 +2735,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE cloud_admin IN SCHEMA public GRANT ALL ON TABL
 -- PostgreSQL database dump complete
 --
 
-\unrestrict x08O1jZNHALPC7Hh1dqKgybt0mchhfP7te7heGjrSM8U0ZeIagZZpKfL9KtJecv
+\unrestrict cbK6GjhhF6eaPHfgSKbbtXA6fEUsWuNazvTGpq3C1cu2W3cyg3eM0cDFIT65W1o
 
