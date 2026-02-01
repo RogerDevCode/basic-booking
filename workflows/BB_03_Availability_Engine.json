@@ -3,289 +3,146 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "sub",
-      "name": "Execute Workflow Trigger",
+      "id": "start",
+      "name": "Start",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
         0,
-        100
+        0
       ]
     },
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "availability-v3",
-        "responseMode": "responseNode"
-      },
-      "id": "trig",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
-      "position": [
-        0,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\ntry {\n    const allItems = $input.all();\n    if (!allItems || allItems.length === 0) return [{ json: { error: true, message: \"No data received\", status: 400 } }];\n    const root = allItems[0].json || {};\n    const input = root.body ? root.body : root; \n    \n    const errors = [];\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n    // FIX: Explicit string check to prevent Array.toString() bypass\n    if (typeof input.professional_id !== 'string' || !uuidRegex.test(input.professional_id)) \n        errors.push(\"Invalid professional_id (String UUID required)\");\n    \n    if (typeof input.service_id !== 'string' || !uuidRegex.test(input.service_id)) \n        errors.push(\"Invalid service_id (String UUID required)\");\n    \n    if (!input.date || typeof input.date !== 'string') {\n        errors.push(\"Invalid date format\");\n    } else {\n        const d = new Date(input.date);\n        const isoDate = d.toISOString().split('T')[0];\n        if (isNaN(d.getTime()) || isoDate !== input.date) errors.push(\"Invalid date (Logic failure)\");\n    }\n\n    if (errors.length > 0) return [{ json: { error: true, message: errors.join(', '), status: 400 } }];\n\n    const dateObj = new Date(input.date);\n    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n    \n    return [{\n        json: {\n            ...input,\n            error: false,\n            day_of_week: days[dateObj.getUTCDay()],\n            start_of_day: `${input.date} 00:00:00`,\n            end_of_day: `${input.date} 23:59:59`\n        }\n    }];\n\n} catch (e) {\n    return [{ json: { error: true, message: \"Guard Internal Error\", status: 500 } }];\n}\n"
+        "jsCode": "\nconst input = $input.item.json;\nconst errors = [];\nconst providerId = input.provider_id;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nif (!providerId) errors.push(\"Missing provider_id\");\nelse if (!uuidRegex.test(providerId)) errors.push(\"Invalid provider_id format\");\n\nif (errors.length > 0) return { json: { error: true, message: errors.join(\"; \"), slots: [] } };\nreturn { json: input };\n"
       },
       "id": "guard",
       "name": "Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        250,
-        200
+        200,
+        0
       ]
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.error }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "error"
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
-      "id": "check",
-      "name": "Valid?",
+      "id": "check_valid",
+      "name": "Error?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
-        500,
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: { slots: [], error: $input.item.json.message }}];"
+      },
+      "id": "return_empty",
+      "name": "Return Empty",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
         200
       ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {
-          "responseCode": "={{ $json.status || 400 }}"
-        }
-      },
-      "id": "resp_err",
-      "name": "Respond Error",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        900,
-        350
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "schema": "public",
-        "table": "services",
-        "whereClause": {
-          "values": [
-            {
-              "column": "id",
-              "operator": "equal",
-              "value": "={{ $node['Guard'].json.service_id }}"
-            }
-          ]
-        }
-      },
-      "id": "get_srv",
-      "name": "Get Service",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        750,
-        50
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "schema": "public",
-        "table": "schedules",
-        "whereClause": {
-          "values": [
-            {
-              "column": "professional_id",
-              "operator": "equal",
-              "value": "={{ $node['Guard'].json.professional_id }}"
-            },
-            {
-              "column": "day_of_week",
-              "operator": "equal",
-              "value": "={{ $node['Guard'].json.day_of_week }}"
-            }
-          ]
-        }
-      },
-      "id": "get_sch",
-      "name": "Get Schedule",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        950,
-        50
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "schema": "public",
-        "table": "bookings",
-        "whereClause": {
-          "values": [
-            {
-              "column": "professional_id",
-              "operator": "equal",
-              "value": "={{ $node['Guard'].json.professional_id }}"
-            },
-            {
-              "column": "start_time",
-              "operator": "between",
-              "value": "={{ $node['Guard'].json.start_of_day }}",
-              "value2": "={{ $node['Guard'].json.end_of_day }}"
-            }
-          ]
-        }
-      },
-      "id": "get_bkg",
-      "name": "Get Bookings",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        1150,
-        50
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      },
-      "alwaysOutputData": true
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT public.get_tenant_config_json('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')"
+        "query": "SELECT public.get_app_config_json() as config"
       },
-      "id": "get_conf",
-      "name": "Get Config",
+      "id": "db_config",
+      "name": "DB: Get Config",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        1150,
-        250
+        600,
+        0
       ],
       "credentials": {
         "postgres": {
           "id": "aa8wMkQBBzGHkJzn",
           "name": "Postgres Neon"
         }
-      },
-      "alwaysOutputData": true
+      }
     },
     {
       "parameters": {
-        "jsCode": "\nconst serviceItems = $items(\"Get Service\");\nconst scheduleItems = $items(\"Get Schedule\");\nconst bookingItems = $items(\"Get Bookings\");\nconst configItems = $items(\"Get Config\");\n\nconst service = serviceItems.length > 0 && serviceItems[0].json.id ? serviceItems[0].json : null;\nconst schedule = scheduleItems.length > 0 && scheduleItems[0].json.start_time ? scheduleItems[0].json : null;\nconst config = configItems.length > 0 ? configItems[0].json.get_tenant_config_json : { SLOT_DURATION_MINS: 30 }; \nconst bookings = bookingItems.map(i => i.json).filter(b => b.id);\nconst targetDate = $node[\"Guard\"].json.date;\n\nif (!service) return [{ json: { error: true, message: \"Service not found.\", status: 404 } }];\nif (!schedule) return [{ json: { error: false, status: \"closed\", message: \"No schedule.\", slots: [] } }];\n\nconst duration = parseInt(service.duration_minutes || config.SLOT_DURATION_MINS || 30);\nconst toMins = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };\nconst toTime = (m) => { return `${Math.floor(m/60).toString().padStart(2,'0')}:${(m%60).toString().padStart(2,'0')}`; };\n\nlet current = toMins(schedule.start_time);\nconst end = toMins(schedule.end_time);\nlet available = [];\n\nwhile (current + duration <= end) {\n    const sStr = toTime(current);\n    const eStr = toTime(current + duration);\n    const sDt = new Date(`${targetDate}T${sStr}:00`);\n    const eDt = new Date(`${targetDate}T${eStr}:00`);\n    let blocked = false;\n    for (const b of bookings) {\n        if (sDt < new Date(b.end_time) && eDt > new Date(b.start_time)) { blocked = true; break; }\n    }\n    if (!blocked) {\n        available.push({ start: sStr, end: eStr, label: `${sStr} - ${eStr}`, start_iso: sDt.toISOString(), end_iso: eDt.toISOString() });\n    }\n    current += duration;\n}\nreturn [{ json: { status: \"success\", date: targetDate, slots: available, duration_used: duration, error: false } }];\n"
+        "operation": "executeQuery",
+        "query": "SELECT day_of_week, start_time, end_time FROM schedules WHERE provider_id = $1 AND is_active = true",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $('Guard').item.json.provider_id }}"
+              }
+            ]
+          }
+        }
       },
-      "id": "core",
-      "name": "Core",
+      "id": "db_sched",
+      "name": "DB: Get Schedule",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        800,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst scheduleItems = $items(\"DB: Get Schedule\");\nconst configItem = $items(\"DB: Get Config\")[0]?.json?.config || {};\nconst slotDuration = parseInt(configItem.SLOT_DURATION_MINS || 30);\n\nconst slots = [];\n\nif (scheduleItems.length > 0) {\n    const rule = scheduleItems[0].json;\n    \n    // Parse times (HH:MM:SS)\n    const [startH, startM] = rule.start_time.split(':').map(Number);\n    const [endH, endM] = rule.end_time.split(':').map(Number);\n    \n    let currentTotalMinutes = startH * 60 + startM;\n    const endTotalMinutes = endH * 60 + endM;\n    \n    while (currentTotalMinutes + slotDuration <= endTotalMinutes) {\n        const h = Math.floor(currentTotalMinutes / 60);\n        const m = currentTotalMinutes % 60;\n        const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;\n        slots.push(timeStr);\n        currentTotalMinutes += slotDuration;\n    }\n}\n\nreturn [{ json: { slots: slots, config: { duration: slotDuration } } }];\n"
+      },
+      "id": "calc",
+      "name": "Calc Slots",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1350,
-        50
-      ]
-    },
-    {
-      "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.error }}",
-        "rules": {
-          "rules": [
-            {
-              "value2": true,
-              "outputKey": "error"
-            }
-          ]
-        },
-        "fallbackOutput": 1
-      },
-      "id": "check_core",
-      "name": "Core OK?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
-      "position": [
-        1550,
-        50
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}"
-      },
-      "id": "resp_ok",
-      "name": "Respond Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1950,
-        50
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {
-          "responseCode": "={{ $json.status || 400 }}"
-        }
-      },
-      "id": "resp_err_core",
-      "name": "Respond Core Error",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1950,
-        250
+        1000,
+        0
       ]
     }
   ],
   "connections": {
-    "Execute Workflow Trigger": {
-      "main": [
-        [
-          {
-            "node": "Guard",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Webhook": {
+    "Start": {
       "main": [
         [
           {
@@ -300,98 +157,47 @@
       "main": [
         [
           {
-            "node": "Valid?",
+            "node": "Error?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Valid?": {
+    "Error?": {
       "main": [
         [
           {
-            "node": "Respond Error",
+            "node": "Return Empty",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Get Service",
+            "node": "DB: Get Config",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Service": {
+    "DB: Get Config": {
       "main": [
         [
           {
-            "node": "Get Schedule",
+            "node": "DB: Get Schedule",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Schedule": {
+    "DB: Get Schedule": {
       "main": [
         [
           {
-            "node": "Get Bookings",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Bookings": {
-      "main": [
-        [
-          {
-            "node": "Get Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Config": {
-      "main": [
-        [
-          {
-            "node": "Core",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Core": {
-      "main": [
-        [
-          {
-            "node": "Core OK?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Core OK?": {
-      "main": [
-        [
-          {
-            "node": "Respond Core Error",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Respond Success",
+            "node": "Calc Slots",
             "type": "main",
             "index": 0
           }

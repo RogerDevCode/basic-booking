@@ -27,7 +27,7 @@
     },
     {
       "parameters": {
-        "jsCode": "try {\n    const token = $json.token;\n    const secret = $env.JWT_SECRET || 'your-secret-key-change-in-production';\n    \n    // Split JWT into parts\n    const parts = token.split('.');\n    if (parts.length !== 3) {\n        throw new Error('Invalid JWT format');\n    }\n    \n    // Decode payload (middle part)\n    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));\n    \n    // Verify expiry\n    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {\n        return [{\n            json: {\n                error: true,\n                status: 401,\n                message: 'UNAUTHORIZED: Token has expired',\n                code: 'TOKEN_EXPIRED'\n            }\n        }];\n    \n    // Verify role (must be admin)\n    if (payload.role !== 'admin') {\n        return [{\n            json: {\n                error: true,\n                status: 403,\n                message: 'FORBIDDEN: Admin access required',\n                code: 'INSUFFICIENT_PERMISSIONS'\n            }\n        }];\n    \n    // Return decoded payload\n    return [{\n        json: {\n            valid: true,\n            user: {\n                id: payload.user_id,\n                email: payload.email,\n                role: payload.role,\n                tenant_id: payload.tenant_id\n            },\n            token_exp: payload.exp\n        }\n    }];\n} catch (e) {\n    return [{\n        json: {\n            error: true,\n            status: 401,\n            message: 'UNAUTHORIZED: Invalid token - ' + e.message,\n            code: 'INVALID_TOKEN'\n        }\n    }];\n}"
+        "jsCode": "try {\n    const token = $json.token;\n    const secret = $env.JWT_SECRET || 'AutoAgenda_Secret_Key_2026_Secure';\n    \n    // Split JWT into parts\n    const parts = token.split('.');\n    if (parts.length !== 3) {\n        throw new Error('Invalid JWT format');\n    }\n    \n    // Decode payload (middle part)\n    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));\n    \n    // Verify expiry\n    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {\n        return [{\n            json: {\n                error: true,\n                status: 401,\n                message: 'UNAUTHORIZED: Token has expired',\n                code: 'TOKEN_EXPIRED'\n            }\n        }];\n    \n    // Verify role (must be admin)\n    if (payload.role !== 'admin') {\n        return [{\n            json: {\n                error: true,\n                status: 403,\n                message: 'FORBIDDEN: Admin access required',\n                code: 'INSUFFICIENT_PERMISSIONS'\n            }\n        }];\n    \n    // Return decoded payload\n    return [{\n        json: {\n            valid: true,\n            user: {\n                id: payload.user_id,\n                email: payload.email,\n                role: payload.role,\n                // tenant_id removed for single-tenant\n            },\n            token_exp: payload.exp\n        }\n    }];\n} catch (e) {\n    return [{\n        json: {\n            error: true,\n            status: 401,\n            message: 'UNAUTHORIZED: Invalid token - ' + e.message,\n            code: 'INVALID_TOKEN'\n        }\n    }];\n}"
       },
       "id": "verify_token",
       "name": "Verify Token",
@@ -40,22 +40,39 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.error }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "error"
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
       "id": "check_valid",
       "name": "Token Valid?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         600,
         100

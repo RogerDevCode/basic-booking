@@ -5,7 +5,10 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "book-v3",
-        "responseMode": "responseNode"
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
       },
       "id": "web_trig",
       "name": "Webhook",
@@ -14,11 +17,12 @@
       "position": [
         0,
         300
-      ]
+      ],
+      "webhookId": "bb04-booking-webhook"
     },
     {
       "parameters": {
-        "jsCode": "\ntry {\n    const allItems = $input.all();\n    if (!allItems || allItems.length === 0) return [{ json: { error: true, code: \"ERR_NO_DATA\", message: \"No data received\", status: 400 } }];\n    const root = allItems[0].json || {};\n    const input = root.body ? root.body : root; \n    \n    const errors = [];\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n    if (!input.professional_id || !uuidRegex.test(input.professional_id)) errors.push(\"Invalid professional_id\");\n    if (!input.user_id || !uuidRegex.test(input.user_id)) errors.push(\"Invalid user_id\");\n    \n    const start = new Date(input.start_time);\n    const end = new Date(input.end_time);\n    \n    if (isNaN(start.getTime())) errors.push(\"Invalid start_time format\");\n    if (isNaN(end.getTime())) errors.push(\"Invalid end_time format\");\n    \n    if (start >= end) errors.push(\"start_time must be before end_time\");\n    if ((end - start) <= 0) errors.push(\"Duration must be positive\");\n\n    if (input.service_id && !uuidRegex.test(input.service_id)) errors.push(\"Invalid service_id (UUID)\");\n\n    if (errors.length > 0) return [{ json: { error: true, code: \"ERR_VALIDATION\", details: errors, message: \"Validation failed\", status: 400 } }];\n\n    const durationMin = (end - start) / (1000 * 60);\n    return [{ json: { ...input, duration_min: durationMin, status: 'confirmed', error: false } }];\n} catch (e) { return [{ json: { error: true, code: \"ERR_GUARD_CRASH\", message: \"Guard Crash\", status: 500 } }]; }\n"
+        "jsCode": "\ntry {\n    const allItems = $input.all();\n    if (!allItems || allItems.length === 0) return [{ json: { error: true, code: \"ERR_NO_DATA\", message: \"No data received\", status: 400 } }];\n    const root = allItems[0].json || {};\n    const input = root.body ? root.body : root; \n    \n    const errors = [];\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n    if (!input.provider_id || !uuidRegex.test(input.provider_id)) errors.push(\"Invalid provider_id\");\n    if (!input.user_id || !uuidRegex.test(input.user_id)) errors.push(\"Invalid user_id\");\n    \n    const start = new Date(input.start_time);\n    const end = new Date(input.end_time);\n    \n    if (isNaN(start.getTime())) errors.push(\"Invalid start_time format\");\n    if (isNaN(end.getTime())) errors.push(\"Invalid end_time format\");\n    if (start.getTime() >= end.getTime()) errors.push(\"start_time must be strictly before end_time\");\n\n    if (errors.length > 0) return [{ json: { error: true, code: \"ERR_VALIDATION\", details: errors, message: \"Validation failed\", status: 400 } }];\n\n    const serviceId = input.service_id || null;\n    const durationMin = (end - start) / (1000 * 60);\n    return [{ json: { ...input, service_id: serviceId, duration_min: durationMin, status: 'confirmed', error: false } }];\n} catch (e) { \n    console.error('[BB_04 Guard] Error:', e.message);\n    return [{ json: { error: true, code: \"ERR_GUARD_CRASH\", message: \"Validation error\", details: e.message, status: 500 } }]; \n}\n"
       },
       "id": "guard",
       "name": "Guard",
@@ -31,22 +35,40 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.error }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "error"
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    },
+                    "rightValue": ""
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": "extra"
+        }
       },
       "id": "check_err",
       "name": "Valid?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         450,
         200
@@ -54,25 +76,49 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
+        "respondWith": "text",
+        "responseBody": "={{ '<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>body{font-family:Arial;text-align:center;padding:50px}h1{color:#e74c3c}</style></head><body><h1>⚠️ Error de Validación</h1><p>' + ($json.message || 'Datos inválidos') + '</p></body></html>' }}",
         "options": {
-          "responseCode": "={{ $json.status || 400 }}"
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
         }
       },
-      "id": "resp_err",
-      "name": "Respond Error",
+      "id": "resp_400",
+      "name": "400 Bad Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        850,
+        700,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow('BB_00_Global_Error_Handler').id }}",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "call_bb00",
+      "name": "Call BB_00 Error Handler",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        950,
         400
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT public.get_tenant_config_json('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')"
+        "query": "SELECT public.get_app_config_json() as config"
       },
       "id": "get_conf",
       "name": "Get Config",
@@ -87,11 +133,12 @@
           "id": "aa8wMkQBBzGHkJzn",
           "name": "Postgres Neon"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "\nconst configItems = $items(\"Get Config\");\nconst config = configItems.length > 0 ? configItems[0].json.get_tenant_config_json : { min_duration_min: 15, max_duration_min: 120 };\nconst input = $node[\"Guard\"].json;\n\nconst min = parseInt(config.min_duration_min || 15);\nconst max = parseInt(config.max_duration_min || 120);\nconst duration = input.duration_min;\n\nif (duration < min || duration > max) {\n    return [{ json: { error: true, code: \"ERR_DURATION_RANGE\", message: `Duration ${duration}m out of range (${min}m - ${max}m)`, status: 400 } }];\n}\nreturn [{ json: { valid: true, error: false } }];\n"
+        "jsCode": "\nconst guardData = $('Guard').item.json;\nconst configData = $('Get Config').item.json.config || {};\n\nconst durationMin = guardData.duration_min || 0;\nconst minDuration = parseInt(configData.MIN_DURATION_MIN || 15);\nconst maxDuration = parseInt(configData.MAX_DURATION_MIN || 120);\n\nif (durationMin < minDuration || durationMin > maxDuration) {\n    return [{ \n        json: { \n            error: true, \n            code: \"ERR_INVALID_DURATION\",\n            message: `⚠️ La duración debe estar entre ${minDuration} y ${maxDuration} minutos`,\n            status: 400\n        } \n    }];\n}\n\nreturn [{ json: { ...guardData, valid: true } }];\n"
       },
       "id": "val_dur",
       "name": "Validate Duration",
@@ -104,22 +151,40 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.error }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "error"
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-duration-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    },
+                    "rightValue": ""
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": "extra"
+        }
       },
       "id": "check_dur",
       "name": "Duration OK?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         1100,
         100
@@ -128,9 +193,18 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT acquire_booking_lock($1, $2) as locked;",
+        "query": "SELECT acquire_booking_lock($1::uuid, $2::timestamptz) as locked;",
         "options": {
-          "queryParameters": "={{ [$json.professional_id, $json.start_time] }}"
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.provider_id }}"
+              },
+              {
+                "value": "={{ $json.start_time }}"
+              }
+            ]
+          }
         }
       },
       "id": "db_lock",
@@ -146,26 +220,45 @@
           "id": "aa8wMkQBBzGHkJzn",
           "name": "Postgres Neon"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.locked }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": false,
-              "outputKey": "locked"
+              "outputKey": "locked",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-locked-false",
+                    "leftValue": "={{ $json.locked }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    },
+                    "rightValue": ""
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": "extra"
+        }
       },
       "id": "check_lock",
       "name": "Locked?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         1500,
         0
@@ -174,7 +267,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { error: true, code: \"ERR_SLOT_LOCKED\", message: \"Slot locked\" } }}",
+        "responseBody": "={{ { error: true, message: '⏳ Este horario está siendo procesado. Por favor, intenta con otro horario o espera unos segundos.', code: 'SLOT_LOCKED' } }}",
         "options": {
           "responseCode": 409
         }
@@ -194,13 +287,13 @@
         "start": "={{ $node['Guard'].json.start_time }}",
         "end": "={{ $node['Guard'].json.end_time }}",
         "additionalFields": {
-          "summary": "Reserva AutoAgenda: {{ $node['Guard'].json.user_id }}"
+          "summary": "Reserva: {{ $node['Guard'].json.user_id }}"
         }
       },
-      "id": "gcal_real",
-      "name": "GCal: Create (Real)",
+      "id": "gcal",
+      "name": "GCal: Create",
       "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1,
+      "typeVersion": 1.3,
       "position": [
         1700,
         0
@@ -215,33 +308,73 @@
     },
     {
       "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-gcal-id",
+                    "leftValue": "={{ !!$json.id }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    },
+                    "rightValue": ""
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "check_gcal",
+      "name": "GCal OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1900,
+        0
+      ]
+    },
+    {
+      "parameters": {
         "operation": "insert",
         "schema": "public",
         "table": "bookings",
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            "user_id": "={{ $node['Guard'].json.user_id }}",
-            "professional_id": "={{ $node['Guard'].json.professional_id }}",
-            "service_id": "={{ $node['Guard'].json.service_id }}",
-            "start_time": "={{ $node['Guard'].json.start_time }}",
-            "end_time": "={{ $node['Guard'].json.end_time }}",
+            "user_id": "={{ $('Guard').item.json.user_id }}",
+            "provider_id": "={{ $('Guard').item.json.provider_id }}",
+            "service_id": "={{ $('Guard').item.json.service_id ?? null }}",
+            "start_time": "={{ $('Guard').item.json.start_time }}",
+            "end_time": "={{ $('Guard').item.json.end_time }}",
             "status": "confirmed",
-            "gcal_event_id": "={{ $node['GCal: Create (Real)'].json.id }}"
+            "gcal_event_id": "={{ $('GCal: Create').item.json.id }}"
           }
         },
         "options": {
-          "returnFields": "id"
+          "returnFields": "id,start_time,end_time"
         }
       },
-      "id": "db_insert",
+      "id": "db_ins",
       "name": "DB: Insert",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        1900,
-        0
+        2100,
+        -100
       ],
       "credentials": {
         "postgres": {
@@ -249,81 +382,193 @@
           "name": "Postgres Neon"
         }
       },
+      "alwaysOutputData": true,
       "continueOnFail": true
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ !!$node['GCal: Create (Real)'].json.id && !!$json.id }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "success"
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-db-id",
+                    "leftValue": "={{ !!$json.id }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    },
+                    "rightValue": ""
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": "extra"
+        }
       },
-      "id": "check_saga",
-      "name": "Saga Success?",
+      "id": "check_db",
+      "name": "DB OK?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
-        2100,
-        0
+        2300,
+        -100
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { status: \"success\", booking_id: $json.id } }}"
+        "responseBody": "={{ { success: true, message: '✅ Reserva confirmada exitosamente', booking_id: $json.id, start_time: $json.start_time, end_time: $json.end_time } }}",
+        "options": {
+          "responseCode": 201
+        }
       },
-      "id": "respond_ok",
+      "id": "resp_ok",
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        2300,
-        0
+        2500,
+        -200
       ]
     },
     {
       "parameters": {
         "operation": "delete",
         "calendar": "primary",
-        "eventId": "={{ $node['GCal: Create (Real)'].json.id }}"
+        "eventId": "={{ $('GCal: Create').item.json.id }}"
       },
-      "id": "gcal_rollback",
-      "name": "GCal: Rollback (Real)",
+      "id": "rollback",
+      "name": "GCal: Rollback",
       "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1,
+      "typeVersion": 1.3,
       "position": [
-        2300,
-        200
+        2500,
+        0
       ],
       "credentials": {
         "googleCalendarOAuth2": {
           "id": "GOOGLE_CALENDAR_CRED_ID",
           "name": "Google Calendar"
         }
+      },
+      "continueOnFail": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": {
+        "enabled": true,
+        "maxRetries": 2,
+        "waitBetweenRetries": 1000
       }
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { error: true, code: \"ERR_TRANSACTION\", message: \"Transaction Failed (Rollback executed)\" } }}",
+        "responseBody": "={{ { error: true, message: '❌ No pudimos completar tu reserva. Por favor, intenta nuevamente.', code: 'TRANSACTION_FAILED' } }}",
         "options": {
           "responseCode": 500
         }
       },
-      "id": "respond_fail",
+      "id": "resp_fail",
       "name": "Respond Fail",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        2500,
-        200
+        2700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT EXISTS(SELECT 1 FROM providers WHERE id = $1 AND deleted_at IS NULL) as provider_exists, EXISTS(SELECT 1 FROM users WHERE id = $2 AND deleted_at IS NULL) as user_exists",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $('Guard').item.json.provider_id }}"
+              },
+              {
+                "value": "={{ $('Guard').item.json.user_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "val_fks",
+      "name": "Validate Foreign Keys",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1250,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "prov-exists",
+                    "leftValue": "={{ $json.provider_exists }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    },
+                    "rightValue": ""
+                  },
+                  {
+                    "id": "user-exists",
+                    "leftValue": "={{ $json.user_exists }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    },
+                    "rightValue": ""
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "check_fks",
+      "name": "FKs OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1400,
+        100
       ]
     }
   ],
@@ -354,134 +599,192 @@
       "main": [
         [
           {
-            "node": "Respond Error",
+            "node": "resp_400",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Get Config",
+            "node": "get_conf",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Config": {
+    "resp_400": {
       "main": [
         [
           {
-            "node": "Validate Duration",
+            "node": "call_bb00",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validate Duration": {
+    "get_conf": {
       "main": [
         [
           {
-            "node": "Duration OK?",
+            "node": "val_dur",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Duration OK?": {
+    "val_dur": {
       "main": [
         [
           {
-            "node": "Respond Error",
+            "node": "check_dur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check_dur": {
+      "main": [
+        [
+          {
+            "node": "resp_400",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "DB: Lock Slot",
+            "node": "val_fks",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB: Lock Slot": {
+    "db_lock": {
       "main": [
         [
           {
-            "node": "Locked?",
+            "node": "check_lock",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Locked?": {
+    "check_lock": {
       "main": [
         [
           {
-            "node": "Respond Locked",
+            "node": "resp_locked",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "GCal: Create (Real)",
+            "node": "gcal",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "GCal: Create (Real)": {
+    "gcal": {
       "main": [
         [
           {
-            "node": "DB: Insert",
+            "node": "check_gcal",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB: Insert": {
+    "check_gcal": {
       "main": [
         [
           {
-            "node": "Saga Success?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Saga Success?": {
-      "main": [
-        [
-          {
-            "node": "Respond Success",
+            "node": "db_ins",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "GCal: Rollback (Real)",
+            "node": "resp_400",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "GCal: Rollback (Real)": {
+    "db_ins": {
       "main": [
         [
           {
-            "node": "Respond Fail",
+            "node": "check_db",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check_db": {
+      "main": [
+        [
+          {
+            "node": "resp_ok",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "rollback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rollback": {
+      "main": [
+        [
+          {
+            "node": "resp_fail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "val_fks": {
+      "main": [
+        [
+          {
+            "node": "check_fks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check_fks": {
+      "main": [
+        [
+          {
+            "node": "db_lock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp_400",
             "type": "main",
             "index": 0
           }

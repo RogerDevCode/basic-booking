@@ -57,7 +57,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.all()[0].json.body || {}; return [{ json: { username: String(body.username || ''), password: String(body.password || '') } }];"
+        "jsCode": "\nconst items = $input.all();\nif (!items.length) return [{ json: { username: '', password: '' } }];\n\nconst raw = items[0].json.body || items[0].json;\nconst username = String(raw.username || '').trim();\nconst password = String(raw.password || '');\n\n// Basic validation (logging/logic handled downstream)\nreturn [{ \n    json: { \n        username: username, \n        password: password \n    } \n}];\n"
       },
       "id": "guard_login",
       "name": "Guard: Login",
@@ -102,22 +102,39 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.valid }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "valid"
+              "outputKey": "valid",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-valid",
+                    "leftValue": "={{ $json.valid }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
       "id": "check_creds",
       "name": "Check Credentials",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         600,
         1400
@@ -197,22 +214,39 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.authenticated }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "success"
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-auth",
+                    "leftValue": "={{ $json.authenticated }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
       "id": "check_stats",
       "name": "Check Auth Stats",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         400,
         200
@@ -299,22 +333,39 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.authenticated }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "success"
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-auth",
+                    "leftValue": "={{ $json.authenticated }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
       "id": "check_cal",
       "name": "Check Auth Cal",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         400,
         600
@@ -427,22 +478,39 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.authenticated }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "success"
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-auth",
+                    "leftValue": "={{ $json.authenticated }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
       "id": "check_conf",
       "name": "Check Auth Conf",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         400,
         1000
@@ -463,22 +531,39 @@
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ $json.valid }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "valid"
+              "outputKey": "valid",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-valid",
+                    "leftValue": "={{ $json.valid }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
       "id": "check_body",
       "name": "Valid?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         800,
         1000

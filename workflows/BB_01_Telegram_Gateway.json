@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst text = $json.text;\nlet action = \"unknown\";\nlet slug = null;\n\n// Clean Parser: Detects /start <slug>\nif (text.startsWith(\"/start \") && text.length > 7) {\n    action = \"set_context\";\n    slug = text.replace(\"/start \", \"\").trim();\n} else if (text.startsWith(\"/book\")) {\n    action = \"book\";\n} else if (text.startsWith(\"/list\")) {\n    action = \"list\";\n} else if (text.startsWith(\"/help\")) {\n    action = \"help\";\n}\n\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst dateStr = tomorrow.toISOString().split('T')[0];\n\nreturn [{ json: { ...$json, action, slug, target_date: dateStr } }];\n"
+        "jsCode": "\nconst text = $json.text;\nlet action = \"unknown\";\nlet slug = null;\n\nif (text.startsWith(\"/start \") && text.length > 7) {\n    action = \"set_context\";\n    slug = text.replace(\"/start \", \"\").trim();\n} else if (text.startsWith(\"/book\")) {\n    action = \"book\";\n} else if (text.startsWith(\"/list\")) {\n    action = \"list\";\n} else if (text.startsWith(\"/help\")) {\n    action = \"help\";\n}\n\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst dateStr = tomorrow.toISOString().split('T')[0];\n\nreturn [{ json: { ...$json, action, slug, target_date: dateStr } }];\n"
       },
       "id": "analyze",
       "name": "Analyze Intent",
@@ -44,29 +44,82 @@
     },
     {
       "parameters": {
-        "dataType": "string",
-        "value1": "={{ $json.action }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": "set_context",
-              "outputKey": "set_context"
+              "outputKey": "set_context",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-action",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "set_context"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             },
             {
-              "value2": "book",
-              "outputKey": "book"
+              "outputKey": "book",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-action",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "book"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             },
             {
-              "value2": "list",
-              "outputKey": "list"
+              "outputKey": "list",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-action",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "list"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
+        },
+        "options": {
+          "fallbackOutput": 1
         }
       },
       "id": "router",
       "name": "Router",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         600,
         0
@@ -75,18 +128,16 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH pro AS (SELECT id, name FROM public.professionals WHERE slug = $2) UPDATE public.users SET last_selected_professional_id = pro.id FROM pro WHERE telegram_id = $1 RETURNING pro.name as doctor_name;",
-        "options": {
-          "queryParameters": {
-            "values": [
-              {
-                "value": "={{ $json.chatId }}"
-              },
-              {
-                "value": "={{ $json.slug }}"
-              }
-            ]
-          }
+        "query": "WITH res AS (SELECT id, name FROM public.providers WHERE slug = $2) UPDATE public.users SET last_selected_provider_id = res.id FROM res WHERE telegram_id = $1 RETURNING res.name as provider_name;",
+        "queryParameters": {
+          "values": [
+            {
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "value": "={{ $json.slug }}"
+            }
+          ]
         }
       },
       "id": "db_set",
@@ -99,7 +150,6 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
           "name": "Postgres Neon"
         }
       }
@@ -107,7 +157,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { status: 'success', message: '\u2705 Seleccionado: ' + ($json.doctor_name || 'Desconocido') } }}"
+        "responseBody": "={{ { status: 'success', message: '✅ Seleccionado: ' + ($json.provider_name || 'Desconocido') } }}"
       },
       "id": "resp_set",
       "name": "Respond Set",
@@ -121,15 +171,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT u.last_selected_professional_id, p.name as doctor_name FROM public.users u LEFT JOIN public.professionals p ON u.last_selected_professional_id = p.id WHERE u.telegram_id = $1;",
-        "options": {
-          "queryParameters": {
-            "values": [
-              {
-                "value": "={{ $json.chatId }}"
-              }
-            ]
-          }
+        "query": "SELECT u.last_selected_provider_id, r.name as provider_name FROM public.users u LEFT JOIN public.providers r ON u.last_selected_provider_id = r.id WHERE u.telegram_id = $1;",
+        "queryParameters": {
+          "values": [
+            {
+              "value": "={{ $json.chatId }}"
+            }
+          ]
         }
       },
       "id": "db_get",
@@ -142,29 +190,45 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
           "name": "Postgres Neon"
         }
       }
     },
     {
       "parameters": {
-        "dataType": "boolean",
-        "value1": "={{ !!$json.last_selected_professional_id }}",
+        "mode": "rules",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": true,
-              "outputKey": "has_ctx"
+              "outputKey": "has_ctx",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-ctx",
+                    "leftValue": "={{ !!$json.last_selected_provider_id }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "fallbackOutput": 1
+        "options": {
+          "fallbackOutput": 1
+        }
       },
       "id": "check_ctx",
-      "name": "Has Doctor?",
+      "name": "Has Resource?",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 1,
+      "typeVersion": 3,
       "position": [
         1100,
         100
@@ -173,7 +237,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { error: true, message: '\u26a0\ufe0f Primero selecciona un doctor con /list' } }}"
+        "responseBody": "={{ { error: true, message: '⚠️ Primero selecciona un recurso con /list' } }}"
       },
       "id": "resp_no_ctx",
       "name": "Respond No Context",
@@ -195,7 +259,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "professional_id": "={{ $json.last_selected_professional_id }}",
+            "provider_id": "={{ $json.last_selected_provider_id }}",
             "date": "={{ $node['Analyze Intent'].json.target_date }}"
           }
         }
@@ -203,7 +267,7 @@
       "id": "exec_avail",
       "name": "Call 'BB_03'",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
+      "typeVersion": 1,
       "position": [
         1350,
         50
@@ -212,7 +276,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { result: 'Disponibilidad para ' + $node['DB: Get Context'].json.doctor_name, slots: $json.slots } }}"
+        "responseBody": "={{ { result: 'Disponibilidad para ' + $node['DB: Get Context'].json.provider_name, slots: $json.slots } }}"
       },
       "id": "resp_slots",
       "name": "Respond Slots",
@@ -226,10 +290,10 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT name, slug FROM public.professionals WHERE deleted_at IS NULL;"
+        "query": "SELECT name, slug FROM public.providers WHERE deleted_at IS NULL;"
       },
       "id": "db_list",
-      "name": "DB: List Professionals",
+      "name": "DB: List Resources",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
@@ -238,14 +302,13 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
           "name": "Postgres Neon"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all(); const list = items.map(i => `\u2022 ${i.json.name}: /start ${i.json.slug}`).join('\n'); return [{ json: { message: '\ud83d\udc68\u200d\u2695\ufe0f Doctores disponibles:\n' + list } }];"
+        "jsCode": "const items = $input.all(); const list = items.map(i => `• ${i.json.name}: /start ${i.json.slug}`).join('\n'); return [{ json: { message: '📋 Recursos disponibles:\n' + list } }];"
       },
       "id": "fmt_list",
       "name": "Format List",
@@ -323,7 +386,7 @@
         ],
         [
           {
-            "node": "DB: List Professionals",
+            "node": "DB: List Resources",
             "type": "main",
             "index": 0
           }
@@ -345,14 +408,14 @@
       "main": [
         [
           {
-            "node": "Has Doctor?",
+            "node": "Has Resource?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Has Doctor?": {
+    "Has Resource?": {
       "main": [
         [
           {
@@ -381,7 +444,7 @@
         ]
       ]
     },
-    "DB: List Professionals": {
+    "DB: List Resources": {
       "main": [
         [
           {

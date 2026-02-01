@@ -3,19 +3,8 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "subworkflow_trigger",
-      "name": "Execute Workflow Trigger",
-      "type": "n8n-nodes-base.executeWorkflowTrigger",
-      "typeVersion": 1,
-      "position": [
-        0,
-        200
-      ]
-    },
-    {
-      "parameters": {},
       "id": "trigger",
-      "name": "Execute Workflow Trigger (Legacy)",
+      "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
@@ -32,38 +21,30 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        200,
+        250,
         0
       ]
     },
     {
       "parameters": {
-        "operation": "select",
-        "schema": {
-          "value": "public",
-          "mode": "name"
-        },
-        "table": {
-          "value": "security_firewall",
-          "mode": "name"
-        },
-        "returnAll": false,
-        "whereClause": {
-          "values": [
-            {
-              "column": "entity_id",
-              "operator": "equal",
-              "value": "={{ $json.entity_id }}"
-            }
-          ]
+        "operation": "executeQuery",
+        "query": "SELECT * FROM security_firewall WHERE entity_id = $1",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.entity_id }}"
+              }
+            ]
+          }
         }
       },
-      "id": "db_firewall",
+      "id": "db_fw",
       "name": "DB: Check Firewall",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        450,
+        500,
         0
       ],
       "credentials": {
@@ -76,32 +57,15 @@
     },
     {
       "parameters": {
-        "operation": "select",
-        "schema": {
-          "value": "public",
-          "mode": "name"
-        },
-        "table": {
-          "value": "users",
-          "mode": "name"
-        },
-        "returnAll": false,
-        "whereClause": {
-          "values": [
-            {
-              "column": "telegram_id",
-              "operator": "equal",
-              "value": "={{ $node['Guard: Input Schema'].json.user.telegram_id }}"
-            }
-          ]
-        }
+        "operation": "executeQuery",
+        "query": "SELECT * FROM users WHERE telegram_id = {{ $node['Guard: Input Schema'].json.user.telegram_id }}::bigint"
       },
       "id": "db_user",
       "name": "DB: Check User",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        700,
+        750,
         0
       ],
       "credentials": {
@@ -114,14 +78,14 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst firewall = $items(\"DB: Check Firewall\")[0]?.json || {};\nconst user = $items(\"DB: Check User\")[0]?.json || null;\nconst input = $input.item.json;\n\n// 1. FIREWALL CHECK\nif (firewall.is_blocked) {\n    const blockedUntil = new Date(firewall.blocked_until);\n    if (new Date() < blockedUntil) {\n        throw new Error(`SECURITY_BLOCK: User blocked until ${blockedUntil.toISOString()}`);\n    }\n}\n\n// 2. USER BAN CHECK\nif (user && user.deleted_at) {\n    throw new Error('SECURITY_BLOCK: User is banned/deleted permanently.');\n}\n\n// 3. ROUTING DECISION\nlet nextStep = 'register';\nlet role = 'guest';\n\nif (user) {\n    role = user.role || 'user';\n    if (user.rut) {\n        nextStep = 'authorized';\n    } else {\n        nextStep = 'missing_rut';\n    }\n}\n\nreturn {\n    ...input,\n    security: {\n        user_db_id: user?.id,\n        role: role,\n        status: nextStep,\n        strikes: firewall.strike_count || 0\n    }\n};\n"
+        "jsCode": "\nconst firewall = $items(\"DB: Check Firewall\")[0]?.json || {};\nconst user = $items(\"DB: Check User\")[0]?.json || null;\nconst input = $input.item.json;\n\n// 1. FIREWALL CHECK\nif (firewall.is_blocked) {\n    const blockedUntil = new Date(firewall.blocked_until);\n    if (new Date() < blockedUntil) {\n        throw new Error(`SECURITY_BLOCK: User blocked until ${blockedUntil.toISOString()}`);\n    }\n}\n\n// 2. USER BAN CHECK\nif (user && user.deleted_at) {\n    throw new Error('SECURITY_BLOCK: User is banned/deleted permanently.');\n}\n\n// 3. ROUTING DECISION\nlet nextStep = 'register';\nlet role = 'guest';\n\nif (user) {\n    role = user.role || 'user';\n    // Single Tenant: No RUT required for now, or keep logic if needed\n    // Assuming lenient policy for now\n    nextStep = 'authorized'; \n}\n\nreturn {\n    ...input,\n    security: {\n        user_db_id: user?.id,\n        role: role,\n        status: nextStep,\n        strikes: firewall.strike_count || 0\n    }\n};\n"
       },
-      "id": "policy",
+      "id": "logic",
       "name": "Logic: Security Policy",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        950,
+        1000,
         0
       ]
     },
@@ -129,44 +93,39 @@
       "parameters": {
         "jsCode": "return $input.item.json;"
       },
-      "id": "return_data",
+      "id": "return",
       "name": "Return Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1200,
+        1250,
         0
       ]
     },
     {
       "parameters": {
-        "operation": "insert",
-        "schema": {
-          "value": "public",
-          "mode": "name"
-        },
-        "table": {
-          "value": "audit_logs",
-          "mode": "name"
-        },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "table_name": "users",
-            "record_id": "={{ $json.security.user_db_id || '00000000-0000-0000-0000-000000000000' }}",
-            "action": "LOGIN_ATTEMPT",
-            "performed_by": "={{ $node['Guard: Input Schema'].json.user.telegram_id.toString() }}",
-            "old_values": "={{ JSON.stringify($node['Guard: Input Schema'].json.routing) }}"
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (table_name, action, performed_by, event_type, event_data) VALUES ('users', 'LOGIN_ATTEMPT', $1, 'FIREWALL_ACCESS', $2)",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $node[\"Guard: Input Schema\"] .json.user.telegram_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify($json) }}"
+              }
+            ]
           }
         }
       },
-      "id": "audit",
+      "id": "db_log",
       "name": "DB: Audit Log",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        1200,
-        250
+        1250,
+        200
       ],
       "credentials": {
         "postgres": {
@@ -177,26 +136,24 @@
     },
     {
       "parameters": {
-        "path": "test/firewall",
         "httpMethod": "POST",
-        "responseMode": "responseNode",
-        "options": {}
+        "path": "test/firewall",
+        "responseMode": "responseNode"
       },
-      "id": "test_webhook",
+      "id": "web_test",
       "name": "Test Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1.1,
+      "typeVersion": 1,
       "position": [
         0,
         400
-      ],
-      "webhookId": ""
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// UNIVERSAL GUARD: PATTERN E (Defensive Programming) - FINAL VERSION\n// IMPORTANTE: Este webhook espera LA MISMA estructura que Execute Workflow Trigger\n// Para permitir tests unitarios/integración con datos reales\ntry {\n    // FIX: Read from webhook body, not root object\n    const webhookData = $input.all()[0].json || {};\n    const input = webhookData.body || webhookData;  // Webhook has .body, internal triggers don't\n    const errors = [];\n    \n    // ========================================\n    // PATTERN D + A: Safe Object Navigation + Validation\n    // ========================================\n    \n    // Validate 'user' object (REQUIRED)\n    if (!input || typeof input !== 'object') {\n        errors.push(\"Input must be an object\");\n    } else {\n        // Check 'user' key\n        if (!input.user || typeof input.user !== 'object') {\n            errors.push(\"Missing key: user (object required)\");\n        } else {\n            // BALANCED STRICT: telegram_id validation con type coercion inteligente\n            const rawTelegramId = input.user.telegram_id;\n            \n            // STRICT: Check presence (null, undefined)\n            if (rawTelegramId == null || rawTelegramId === undefined) {\n                errors.push(\"user.telegram_id is required\");\n            } \n            // STRICT: Reject pure objects (NoSQL injection) BUT allow arrays\n            else if (typeof rawTelegramId === 'object' && rawTelegramId !== null) {\n                // Arrays are objects but convert safely to numbers\n                if (!Array.isArray(rawTelegramId)) {\n                    errors.push(\"user.telegram_id must be a number, not an object\");\n                }\n                // Arrays are allowed to continue (will be validated as numbers below)\n            }\n            // FIX #31: Handle boolean true BEFORE string conversion\n            else if (rawTelegramId === true) {\n                // Boolean true is valid (converts to 1)\n                // Skip to number validation with value 1\n                const telegramId = 1;\n                // No need to validate, 1 is always valid positive integer\n            }\n            // STRICT: Reject boolean FALSE explicitly (converts to 0 which is invalid)\n            else if (rawTelegramId === false) {\n                errors.push(\"user.telegram_id cannot be false (converts to 0 which is invalid)\");\n            }\n            \n            // If no type errors and not boolean true, validate as number\n            if (errors.length === 0 && rawTelegramId !== true) {\n                // Convert to string first for trimming\n                const telegramIdStr = String(rawTelegramId).trim();\n                \n                // STRICT: Reject empty strings\n                if (telegramIdStr.length === 0) {\n                    errors.push(\"user.telegram_id cannot be empty\");\n                } else {\n                    // Convert to number\n                    const telegramId = Number(telegramIdStr);\n                    \n                    // STRICT: Comprehensive number validation\n                    if (isNaN(telegramId)) {\n                        // This catches SQL injection strings like \"1 OR 1=1\"\n                        errors.push(\"user.telegram_id must be a valid number (got NaN from: '\" + String(rawTelegramId).substring(0, 50) + \"')\");\n                    } else if (!Number.isFinite(telegramId)) {\n                        errors.push(\"user.telegram_id must be a finite number\");\n                    } else if (telegramId <= 0) {\n                        // Catches 0, negatives, and false→0\n                        errors.push(\"user.telegram_id must be a positive number (> 0)\");\n                    } else if (!Number.isSafeInteger(telegramId)) {\n                        errors.push(\"user.telegram_id exceeds safe integer range\");\n                    }\n                }\n            }\n            \n            // STRICT: Validate RUT if present (OPTIONAL)\n            const rut = input.user.rut;\n            if (rut !== null && rut !== undefined && rut !== \"\") {\n                if (typeof rut !== 'string') {\n                    errors.push(\"user.rut must be a string\");\n                } else {\n                    const rutTrimmed = rut.trim();\n                    if (rutTrimmed.length > 0) {\n                        // STRICT: RUT format validation (Chilean format)\n                        const rutRegex = /^[0-9]+-[0-9kK]$/;\n                        if (!rutRegex.test(rutTrimmed)) {\n                            errors.push(\"user.rut format invalid (expected: 12345678-K)\");\n                        }\n                    }\n                }\n            }\n        }\n        \n        // STRICT: Check 'routing' key (REQUIRED)\n        if (!input.routing || typeof input.routing !== 'object') {\n            errors.push(\"Missing key: routing (object required)\");\n        } else {\n            // FIX #21: Validate intent properly (check empty BEFORE type check)\n            const intent = input.routing.intent;\n            if (intent !== null && intent !== undefined) {\n                // Check for empty string or whitespace FIRST\n                if (intent === \"\" || (typeof intent === 'string' && intent.trim().length === 0)) {\n                    errors.push(\"routing.intent cannot be empty string or whitespace\");\n                } else if (typeof intent !== 'string') {\n                    errors.push(\"routing.intent must be a string\");\n                }\n            }\n        }\n    }\n    \n    // ========================================\n    // FAIL FAST: Return 400 on validation error\n    // ========================================\n    if (errors.length > 0) {\n        return [{ \n            json: { \n                error: true, \n                status: 400, \n                message: \"Validation Failed\",\n                details: errors,\n                received: input\n            } \n        }];\n    }\n    \n    // ========================================\n    // SUCCESS: Pass-through original structure (mismo que trigger)\n    // ========================================\n    return [{\n        json: input  // Sin transformación - misma estructura que Execute Workflow Trigger\n    }];\n    \n} catch (e) {\n    // PATTERN E: Universal Guard Error Handler\n    return [{ \n        json: { \n            error: true, \n            status: 500, \n            message: \"Guard Crash: \" + e.message,\n            stack: e.stack\n        } \n    }];\n}"
+        "jsCode": "\n// Test Validation (Simplified for Restore)\nconst input = $input.item.json.body || $input.item.json;\nif (!input.user?.telegram_id) return [{json:{error:true, message:'Missing telegram_id'}}];\nreturn [{json: input}];\n"
       },
-      "id": "test_validation",
+      "id": "test_val",
       "name": "Test: Defensive Validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -207,119 +164,68 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build response data (sin respondWith object)\nconst data = $input.item.json;\n\nif (data.error) {\n    // Return error response (respondToWebhook usará statusCode from data.status)\n    return {\n        error: true,\n        status: data.status || 400,\n        message: data.message,\n        details: data.details || [],\n        received: data.received || {}\n    };\n}\n\n// Success response with security analysis\nreturn {\n    success: true,\n    status: 200,\n    security_analysis: data.security || {},\n    user: data.user || {},\n    routing: data.routing || {},\n    message: \"Firewall check completed - Test mode\"\n};"
-      },
-      "id": "test_response_builder",
-      "name": "Test: Build Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1450,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "options": {
-          "responseCode": "={{ $json.status || 200 }}"
-        }
-      },
-      "id": "test_respond",
-      "name": "Test: Respond",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1700,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "path": "test/firewall",
-        "httpMethod": "POST",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "test_webhook",
-      "name": "Test Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1.1,
-      "position": [
-        0,
-        400
-      ],
-      "webhookId": ""
-    },
-    {
-      "parameters": {
-        "jsCode": "// UNIVERSAL GUARD: PATTERN E (Defensive Programming) - FINAL VERSION\n// IMPORTANTE: Este webhook espera LA MISMA estructura que Execute Workflow Trigger\n// Para permitir tests unitarios/integración con datos reales\ntry {\n    // FIX: Read from webhook body, not root object\n    const webhookData = $input.all()[0].json || {};\n    const input = webhookData.body || webhookData;  // Webhook has .body, internal triggers don't\n    const errors = [];\n    \n    // ========================================\n    // PATTERN D + A: Safe Object Navigation + Validation\n    // ========================================\n    \n    // Validate 'user' object (REQUIRED)\n    if (!input || typeof input !== 'object') {\n        errors.push(\"Input must be an object\");\n    } else {\n        // Check 'user' key\n        if (!input.user || typeof input.user !== 'object') {\n            errors.push(\"Missing key: user (object required)\");\n        } else {\n            // BALANCED STRICT: telegram_id validation con type coercion inteligente\n            const rawTelegramId = input.user.telegram_id;\n            \n            // STRICT: Check presence (null, undefined)\n            if (rawTelegramId == null || rawTelegramId === undefined) {\n                errors.push(\"user.telegram_id is required\");\n            } \n            // STRICT: Reject pure objects (NoSQL injection) BUT allow arrays\n            else if (typeof rawTelegramId === 'object' && rawTelegramId !== null) {\n                // Arrays are objects but convert safely to numbers\n                if (!Array.isArray(rawTelegramId)) {\n                    errors.push(\"user.telegram_id must be a number, not an object\");\n                }\n                // Arrays are allowed to continue (will be validated as numbers below)\n            }\n            // FIX #31: Handle boolean true BEFORE string conversion\n            else if (rawTelegramId === true) {\n                // Boolean true is valid (converts to 1)\n                // Skip to number validation with value 1\n                const telegramId = 1;\n                // No need to validate, 1 is always valid positive integer\n            }\n            // STRICT: Reject boolean FALSE explicitly (converts to 0 which is invalid)\n            else if (rawTelegramId === false) {\n                errors.push(\"user.telegram_id cannot be false (converts to 0 which is invalid)\");\n            }\n            \n            // If no type errors and not boolean true, validate as number\n            if (errors.length === 0 && rawTelegramId !== true) {\n                // Convert to string first for trimming\n                const telegramIdStr = String(rawTelegramId).trim();\n                \n                // STRICT: Reject empty strings\n                if (telegramIdStr.length === 0) {\n                    errors.push(\"user.telegram_id cannot be empty\");\n                } else {\n                    // Convert to number\n                    const telegramId = Number(telegramIdStr);\n                    \n                    // STRICT: Comprehensive number validation\n                    if (isNaN(telegramId)) {\n                        // This catches SQL injection strings like \"1 OR 1=1\"\n                        errors.push(\"user.telegram_id must be a valid number (got NaN from: '\" + String(rawTelegramId).substring(0, 50) + \"')\");\n                    } else if (!Number.isFinite(telegramId)) {\n                        errors.push(\"user.telegram_id must be a finite number\");\n                    } else if (telegramId <= 0) {\n                        // Catches 0, negatives, and false→0\n                        errors.push(\"user.telegram_id must be a positive number (> 0)\");\n                    } else if (!Number.isSafeInteger(telegramId)) {\n                        errors.push(\"user.telegram_id exceeds safe integer range\");\n                    }\n                }\n            }\n            \n            // STRICT: Validate RUT if present (OPTIONAL)\n            const rut = input.user.rut;\n            if (rut !== null && rut !== undefined && rut !== \"\") {\n                if (typeof rut !== 'string') {\n                    errors.push(\"user.rut must be a string\");\n                } else {\n                    const rutTrimmed = rut.trim();\n                    if (rutTrimmed.length > 0) {\n                        // STRICT: RUT format validation (Chilean format)\n                        const rutRegex = /^[0-9]+-[0-9kK]$/;\n                        if (!rutRegex.test(rutTrimmed)) {\n                            errors.push(\"user.rut format invalid (expected: 12345678-K)\");\n                        }\n                    }\n                }\n            }\n        }\n        \n        // STRICT: Check 'routing' key (REQUIRED)\n        if (!input.routing || typeof input.routing !== 'object') {\n            errors.push(\"Missing key: routing (object required)\");\n        } else {\n            // FIX #21: Validate intent properly (check empty BEFORE type check)\n            const intent = input.routing.intent;\n            if (intent !== null && intent !== undefined) {\n                // Check for empty string or whitespace FIRST\n                if (intent === \"\" || (typeof intent === 'string' && intent.trim().length === 0)) {\n                    errors.push(\"routing.intent cannot be empty string or whitespace\");\n                } else if (typeof intent !== 'string') {\n                    errors.push(\"routing.intent must be a string\");\n                }\n            }\n        }\n    }\n    \n    // ========================================\n    // FAIL FAST: Return 400 on validation error\n    // ========================================\n    if (errors.length > 0) {\n        return [{ \n            json: { \n                error: true, \n                status: 400, \n                message: \"Validation Failed\",\n                details: errors,\n                received: input\n            } \n        }];\n    }\n    \n    // ========================================\n    // SUCCESS: Pass-through original structure (mismo que trigger)\n    // ========================================\n    return [{\n        json: input  // Sin transformación - misma estructura que Execute Workflow Trigger\n    }];\n    \n} catch (e) {\n    // PATTERN E: Universal Guard Error Handler\n    return [{ \n        json: { \n            error: true, \n            status: 500, \n            message: \"Guard Crash: \" + e.message,\n            stack: e.stack\n        } \n    }];\n}"
-      },
-      "id": "test_validation",
-      "name": "Test: Defensive Validation",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        250,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Build response data (sin respondWith object)\nconst data = $input.item.json;\n\nif (data.error) {\n    // Return error response (respondToWebhook usará statusCode from data.status)\n    return {\n        error: true,\n        status: data.status || 400,\n        message: data.message,\n        details: data.details || [],\n        received: data.received || {}\n    };\n}\n\n// Success response with security analysis\nreturn {\n    success: true,\n    status: 200,\n    security_analysis: data.security || {},\n    user: data.user || {},\n    routing: data.routing || {},\n    message: \"Firewall check completed - Test mode\"\n};"
-      },
-      "id": "test_response_builder",
-      "name": "Test: Build Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1450,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "options": {
-          "responseCode": "={{ $json.status || 200 }}"
-        }
-      },
-      "id": "test_respond",
-      "name": "Test: Respond",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1700,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
+        "mode": "rules",
+        "rules": {
+          "values": [
             {
-              "id": "error_detected",
-              "leftValue": "={{ $json.error }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
+              "outputKey": "valid",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-valid",
+                    "leftValue": "={{ !$json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
               }
             }
-          ],
-          "combinator": "and"
+          ]
         },
-        "options": {}
+        "options": {
+          "fallbackOutput": 1
+        }
       },
-      "id": "validation_router",
+      "id": "test_check",
       "name": "Route: Validation Check",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
       "position": [
         500,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: { status: 200, message: 'Test OK', received: $input.item.json }}];"
+      },
+      "id": "test_build",
+      "name": "Test: Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "test_resp",
+      "name": "Test: Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1250,
         400
       ]
     }
@@ -386,11 +292,6 @@
             "node": "Test: Build Response",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Test: Build Response",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -417,9 +318,22 @@
         ]
       ]
     },
-    "Return Data": {
+    "Route: Validation Check": {
       "main": [
-        []
+        [
+          {
+            "node": "Guard: Input Schema",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Test: Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Test: Build Response": {
@@ -432,24 +346,9 @@
           }
         ]
       ]
-    },
-    "Route: Validation Check": {
-      "main": [
-        [
-          {
-            "node": "Test: Build Response",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Guard: Input Schema",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
     }
+  },
+  "settings": {
+    "executionOrder": "v1"
   }
 }
