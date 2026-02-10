@@ -1,0 +1,73 @@
+{
+  "model": {
+    "generationConfig": {
+      "timeout": 60000,
+      "contextWindowSize": 128000,
+      "enableCacheControl": true,
+      "samplingParams": {
+        "temperature": 0.4,
+        "top_p": 0.95,
+        "max_tokens": 4096
+      }
+    }
+  },
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:5678/mcp-server/http",
+        "--header",
+        "authorization:Bearer ${N8N_ACCESS_TOKEN}"
+      ]
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.context7.com/mcp",
+        "--header",
+        "CONTEXT7_API_KEY:ctx7sk-56af72b6-13b0-437d-a763-5bb0bf0c5ecb",
+        "--header",
+        "Accept:application/json,text/event-stream"
+      ]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@latest"
+      ]
+    }
+  },
+  "security": {
+    "workspace": {
+      "trust": true
+    },
+    "auth": {
+      "selectedType": "qwen-oauth"
+    }
+  },
+  "tools": {
+    "approvalMode": "auto-edit",
+    "allowed": [
+      "run_shell_command",
+      "web_fetch",
+      "read_file",
+      "write_file",
+      "list_files"
+    ]
+  },
+  "ui": {
+    "hideTips": false,
+    "showLineNumbers": true,
+    "accessibility": {
+      "enableLoadingPhrases": false
+    }
+  },
+  "privacy": {
+    "usageStatisticsEnabled": true
+  },
+  "$version": 3
+}

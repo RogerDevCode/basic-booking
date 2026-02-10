@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node start-n8n-mcp.sh",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
+    "test:watch": "jest --watch",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down"
   },

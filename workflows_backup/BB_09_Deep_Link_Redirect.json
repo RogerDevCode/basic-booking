@@ -1,0 +1,511 @@
+{
+  "name": "BB_09_Deep_Link_Redirect",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "agendar-v3/:slug",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "web_deep",
+      "name": "GET /agendar-v3/:slug",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst slug = $input.first().json.params?.slug;\nif (!slug || typeof slug !== 'string') return { error: true, error_message: 'INVALID_SLUG_TYPE', slug: null, timestamp: new Date().toISOString() };\nif (slug.length < 1 || slug.length > 50) return { error: true, error_message: 'SLUG_LENGTH_INVALID', slug: null, timestamp: new Date().toISOString() };\nconst slugPattern = /^[a-z0-9-]+$/i;\nif (!slugPattern.test(slug)) return { error: true, error_message: 'INVALID_SLUG_FORMAT', slug: slug, timestamp: new Date().toISOString() };\nreturn { error: false, slug: slug.toLowerCase().trim(), timestamp: new Date().toISOString() };\n"
+      },
+      "id": "guard",
+      "name": "Paranoid Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1350,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "valid",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 1
+        }
+      },
+      "id": "check_valid",
+      "name": "Validation OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT slug, name FROM public.providers WHERE slug = $1 AND deleted_at IS NULL LIMIT 1",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.slug }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "db_prov",
+      "name": "DB: Find Provider",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -800,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM public.app_config WHERE key = 'TELEGRAM_BOT_USERNAME' LIMIT 1"
+      },
+      "id": "db_conf",
+      "name": "DB: Get Bot Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -800,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst providerItems = $input.all(0);\nconst configItems = $input.all(1);\n\nconst providerData = (providerItems.length && Object.keys(providerItems[0].json).length) ? providerItems[0].json : null;\nconst botConfig = (configItems.length && Object.keys(configItems[0].json).length) ? configItems[0].json : null;\n\nconst botUsername = botConfig?.value || 'setcalendarbot';\nconst found = !!(providerData && providerData.slug);\n\nreturn {\n  slug: providerData?.slug || null,\n  provider_name: providerData?.name || null,\n  bot_username: botUsername,\n  found: found,\n  timestamp: new Date().toISOString()\n};\n"
+      },
+      "id": "merge",
+      "name": "Merge Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "found",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-found",
+                    "leftValue": "={{ $json.found }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 1
+        }
+      },
+      "id": "check_found",
+      "name": "Found?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (event_type, event_data, created_at) VALUES ('DEEP_LINK_SUCCESS', $1, NOW())",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ JSON.stringify($json) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "log_ok",
+      "name": "Log: Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        0,
+        -150
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "redirect",
+        "redirectURL": "={{ 'https://t.me/' + $json.bot_username + '?start=' + $json.slug }}"
+      },
+      "id": "resp_ok",
+      "name": "Redirect Telegram",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (event_type, event_data, created_at) VALUES ('DEEP_LINK_404', $1, NOW())",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ JSON.stringify($json) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "log_404",
+      "name": "Log: Not Found",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        0,
+        50
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<h1>Profesional no encontrado</h1>",
+        "options": {
+          "responseCode": 404,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp_404",
+      "name": "404 Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        50
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst guardData = $input.first().json;\nreturn {\n  workflow_name: 'BB_09_Deep_Link_Redirect',\n  error_type: 'VALIDATION_FAILURE',\n  error_message: guardData.error_message || 'UNKNOWN',\n  context: guardData,\n  severity: 'MEDIUM'\n};\n"
+      },
+      "id": "prep_err",
+      "name": "Prepare Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (event_type, event_data, created_at) VALUES ('DEEP_LINK_VALIDATION_ERROR', $1, NOW())",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ JSON.stringify($json) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "log_err",
+      "name": "Log: Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -600,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow('BB_00_Global_Error_Handler').id }}"
+      },
+      "id": "call_bb00",
+      "name": "Call BB_00",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<h1>Solicitud Inv\u00e1lida</h1><p>{{ $json.error_message }}</p>",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp_400",
+      "name": "400 Bad Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "GET /agendar-v3/:slug": {
+      "main": [
+        [
+          {
+            "node": "Paranoid Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paranoid Guard": {
+      "main": [
+        [
+          {
+            "node": "Validation OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation OK?": {
+      "main": [
+        [
+          {
+            "node": "DB: Find Provider",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "DB: Get Bot Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Find Provider": {
+      "main": [
+        [
+          {
+            "node": "Merge Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Bot Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Data": {
+      "main": [
+        [
+          {
+            "node": "Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Found?": {
+      "main": [
+        [
+          {
+            "node": "Log: Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log: Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: Success": {
+      "main": [
+        [
+          {
+            "node": "Redirect Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: Not Found": {
+      "main": [
+        [
+          {
+            "node": "404 Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error": {
+      "main": [
+        [
+          {
+            "node": "Log: Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: Error": {
+      "main": [
+        [
+          {
+            "node": "Call BB_00",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call BB_00": {
+      "main": [
+        [
+          {
+            "node": "400 Bad Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

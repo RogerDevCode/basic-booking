@@ -11,20 +11,6 @@
     },
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "test-bb00-crash",
-        "responseMode": "lastNode",
-        "options": {}
-      },
-      "id": "webhook_trig",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
-      "position": [0, 200],
-      "webhookId": "test-bb00-crash"
-    },
-    {
-      "parameters": {
         "jsCode": "throw new Error('💥 Simulación de Error Crítico para BB_00');"
       },
       "id": "crash_node",
@@ -36,17 +22,6 @@
   ],
   "connections": {
     "Manual Trigger": {
-      "main": [
-        [
-          {
-            "node": "Crash System",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Webhook Trigger": {
       "main": [
         [
           {

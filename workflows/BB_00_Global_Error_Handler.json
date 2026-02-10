@@ -1,88 +1,416 @@
 {
-  "name": "BB_00_Global_Error_Handler",
   "nodes": [
     {
       "parameters": {},
-      "id": "err_trig",
+      "id": "f409bd92-6935-45d3-bb68-9044f3de7d72",
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
       "position": [
-        0,
-        0
+        -4384,
+        1280
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst items = $input.all();\n\nfunction redact(val) {\n    if (!val) return val;\n    const str = String(val);\n    if (str.length <= 4) return '***';\n    return str.substring(0, 2) + '***' + str.substring(str.length - 2);\n}\n\nfunction processNode(node) {\n    if (typeof node !== 'object' || node === null) return node;\n    const sensitive = ['email', 'phone', 'name', 'rut', 'address', 'first_name', 'last_name', 'telegram_id'];\n    \n    for (const key in node) {\n        if (sensitive.some(s => key.toLowerCase().includes(s))) {\n            node[key] = redact(node[key]);\n        } else if (typeof node[key] === 'object') {\n            processNode(node[key]);\n        }\n    }\n    return node;\n}\n\nreturn items.map(item => {\n    // FIX: Locate error object which can be at root or inside execution object\n    const rawError = item.json.error || (item.json.execution && item.json.execution.error) || {};\n    \n    const safeJson = {\n        workflow: item.json.workflow || { name: 'UNKNOWN', id: 'UNKNOWN' },\n        execution: item.json.execution || { id: 'UNKNOWN', lastNodeExecuted: 'UNKNOWN' },\n        error: {\n            message: rawError.message || 'UNKNOWN ERROR',\n            stack: rawError.stack || []\n        }\n    };\n    \n    // Redact the whole object\n    const clean = processNode(JSON.parse(JSON.stringify(safeJson)));\n    return { json: clean };\n});\n"
+        "inputSource": "passthrough"
       },
-      "id": "redact",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -4384,
+        1472
+      ],
+      "id": "7ba55674-ae4f-4d62-ac87-9659881f657f",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// STRICT INPUT VALIDATION\n// Valida datos de llamadas manuales\n// Error Trigger siempre pasa (es autom\u00e1tico de n8n)\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  // Sin datos de entrada\n  if (!item || !item.json) {\n    return [{ json: {\n      valid: false,\n      validation_error: true,\n      error_code: 'NO_INPUT_DATA',\n      error_message: 'El payload est\u00e1 vac\u00edo o es inv\u00e1lido',\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  const json = item.json;\n  \n  // ============================================\n  // CASO 1: Error Trigger (autom\u00e1tico de n8n)\n  // Siempre es v\u00e1lido - n8n garantiza la estructura\n  // ============================================\n  if (json.execution && json.workflow) {\n    return [{ json: {\n      ...json,\n      valid: true,\n      source: 'error_trigger',\n      validation_passed: true\n    }}];\n  }\n  \n  // ============================================\n  // CASO 2: Llamada Manual - Validaci\u00f3n Estricta\n  // ============================================\n  const validationErrors = [];\n  \n  // 1. error_message es REQUERIDO\n  const errorMsg = json.error_message || json.errorMessage || json.message;\n  if (!errorMsg) {\n    validationErrors.push('error_message es requerido');\n  } else if (typeof errorMsg !== 'string') {\n    validationErrors.push('error_message debe ser string');\n  } else if (errorMsg.trim().length === 0) {\n    validationErrors.push('error_message no puede estar vac\u00edo');\n  } else if (errorMsg.length > 5000) {\n    validationErrors.push('error_message excede 5000 caracteres');\n  }\n  \n  // 2. workflow_name es REQUERIDO\n  const workflowName = json.workflow_name || json.workflowName;\n  if (!workflowName) {\n    validationErrors.push('workflow_name es requerido');\n  } else if (typeof workflowName !== 'string') {\n    validationErrors.push('workflow_name debe ser string');\n  } else if (workflowName.trim().length === 0) {\n    validationErrors.push('workflow_name no puede estar vac\u00edo');\n  } else if (workflowName.length > 200) {\n    validationErrors.push('workflow_name excede 200 caracteres');\n  }\n  \n  // 3. severity es OPCIONAL pero si existe debe ser v\u00e1lido\n  if (json.severity !== undefined && json.severity !== null) {\n    const validSeverities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];\n    const severityUpper = String(json.severity).toUpperCase();\n    if (!validSeverities.includes(severityUpper)) {\n      validationErrors.push('severity debe ser: CRITICAL, HIGH, MEDIUM o LOW');\n    }\n  }\n  \n  // 4. user_id es OPCIONAL pero si existe debe ser UUID v\u00e1lido\n  if (json.user_id !== undefined && json.user_id !== null && json.user_id !== '') {\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n    if (!uuidRegex.test(String(json.user_id))) {\n      validationErrors.push('user_id debe ser un UUID v\u00e1lido');\n    }\n  }\n  \n  // 5. error_type es OPCIONAL pero si existe debe ser string\n  if (json.error_type !== undefined && json.error_type !== null) {\n    if (typeof json.error_type !== 'string') {\n      validationErrors.push('error_type debe ser string');\n    } else if (json.error_type.length > 100) {\n      validationErrors.push('error_type excede 100 caracteres');\n    }\n  }\n  \n  // ============================================\n  // RESULTADO DE VALIDACI\u00d3N\n  // ============================================\n  if (validationErrors.length > 0) {\n    return [{ json: {\n      valid: false,\n      validation_error: true,\n      error_code: 'VALIDATION_FAILED',\n      error_message: 'Validaci\u00f3n fallida: ' + validationErrors.join('; '),\n      validation_errors: validationErrors,\n      received_fields: Object.keys(json),\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  // Validaci\u00f3n exitosa\n  return [{ json: {\n    ...json,\n    valid: true,\n    source: 'execute_workflow',\n    validation_passed: true\n  }}];\n  \n} catch (e) {\n  return [{ json: {\n    valid: false,\n    validation_error: true,\n    error_code: 'VALIDATION_EXCEPTION',\n    error_message: 'Error interno de validaci\u00f3n: ' + (e.message || 'Unknown'),\n    timestamp: new Date().toISOString()\n  }}];\n}"
+      },
+      "id": "3accb0c2-5f34-4c40-9b3a-d04fb842ebb1",
+      "name": "Strict Input Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4144,
+        1472
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "check-valid",
+                    "leftValue": "={{ $json.valid }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "allMatchingOutputs": false
+        }
+      },
+      "id": "30101af4-df23-4c71-a0c8-19a0875a6635",
+      "name": "Validation Passed?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -3888,
+        1472
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Retornar error al workflow llamador\nconst json = $input.first()?.json || {};\n\nreturn [{ json: {\n  success: false,\n  error: true,\n  error_code: json.error_code || 'VALIDATION_FAILED',\n  error_message: json.error_message || 'Validaci\u00f3n fallida',\n  validation_errors: json.validation_errors || [],\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "a6d00407-8393-48da-b2f1-1f336f26a15b",
+      "name": "Return Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3888,
+        1680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE AND PARSE ERROR\n// Normaliza la estructura de datos\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      source: 'unknown',\n      is_valid: false,\n      parse_error: 'NO_INPUT_DATA',\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  const json = item.json;\n  \n  let source = json.source || 'execute_workflow';\n  let workflowName = 'UNKNOWN';\n  let workflowId = 'UNKNOWN';\n  let executionId = 'UNKNOWN';\n  let lastNodeExecuted = 'UNKNOWN';\n  let errorMessage = 'UNKNOWN ERROR';\n  let errorStack = [];\n  let errorType = 'UNKNOWN';\n  let userId = null;\n  let additionalContext = {};\n  \n  // ============================================\n  // CASO 1: Error Trigger (autom\u00e1tico de n8n)\n  // ============================================\n  if (json.execution && json.workflow) {\n    source = 'error_trigger';\n    workflowName = json.workflow?.name || 'UNKNOWN';\n    workflowId = json.workflow?.id || 'UNKNOWN';\n    executionId = json.execution?.id || 'UNKNOWN';\n    lastNodeExecuted = json.execution?.lastNodeExecuted || 'UNKNOWN';\n    \n    const rawError = json.execution?.error || json.error || {};\n    errorMessage = rawError.message || rawError.description || 'UNKNOWN ERROR';\n    \n    if (rawError.stack) {\n      errorStack = Array.isArray(rawError.stack) ? rawError.stack : [rawError.stack];\n    }\n    \n    // Clasificaci\u00f3n autom\u00e1tica por contenido del mensaje\n    const msgLower = errorMessage.toLowerCase();\n    if (msgLower.includes('econnrefused') || msgLower.includes('etimedout')) {\n      errorType = 'CONNECTION_ERROR';\n    } else if (msgLower.includes('timeout')) {\n      errorType = 'TIMEOUT_ERROR';\n    } else if (msgLower.includes('authenticate') || msgLower.includes('unauthorized')) {\n      errorType = 'AUTH_ERROR';\n    } else if (msgLower.includes('not found') || msgLower.includes('404')) {\n      errorType = 'NOT_FOUND_ERROR';\n    } else if (msgLower.includes('duplicate') || msgLower.includes('unique')) {\n      errorType = 'DUPLICATE_ERROR';\n    } else if (msgLower.includes('syntax') || msgLower.includes('parse')) {\n      errorType = 'PARSE_ERROR';\n    } else {\n      errorType = 'RUNTIME_ERROR';\n    }\n    \n    if (json.execution?.data) {\n      additionalContext.has_result_data = true;\n    }\n    if (json.execution?.mode) {\n      additionalContext.execution_mode = json.execution.mode;\n    }\n  }\n  // ============================================\n  // CASO 2: Llamada Manual (ya validada)\n  // ============================================\n  else {\n    source = 'execute_workflow';\n    workflowName = json.workflow_name || json.workflowName || 'UNKNOWN';\n    workflowId = json.workflow_id || json.workflowId || 'UNKNOWN';\n    executionId = json.execution_id || json.executionId || 'MANUAL_' + Date.now();\n    lastNodeExecuted = json.node_name || json.nodeName || json.last_node || 'UNKNOWN';\n    errorMessage = json.error_message || json.errorMessage || json.message || 'UNKNOWN ERROR';\n    errorType = json.error_type || json.errorType || 'MANUAL_REPORT';\n    userId = json.user_id || json.userId || null;\n    \n    if (json.error_stack || json.stack) {\n      const stack = json.error_stack || json.stack;\n      errorStack = Array.isArray(stack) ? stack : [stack];\n    }\n    \n    // Copiar campos adicionales al contexto\n    const knownKeys = ['workflow_name', 'workflowName', 'workflow_id', 'workflowId', \n                       'execution_id', 'executionId', 'node_name', 'nodeName', 'last_node',\n                       'error_message', 'errorMessage', 'message', 'error_type', 'errorType',\n                       'user_id', 'userId', 'error_stack', 'stack', 'severity',\n                       'valid', 'source', 'validation_passed'];\n    \n    for (const key of Object.keys(json)) {\n      if (!knownKeys.includes(key)) {\n        additionalContext[key] = json[key];\n      }\n    }\n    \n    if (json.severity) {\n      additionalContext.provided_severity = json.severity;\n    }\n  }\n  \n  return [{ json: {\n    source: source,\n    is_valid: true,\n    workflow: {\n      name: workflowName,\n      id: workflowId\n    },\n    execution: {\n      id: executionId,\n      last_node: lastNodeExecuted\n    },\n    error: {\n      type: errorType,\n      message: String(errorMessage).substring(0, 2000),\n      stack: errorStack.slice(0, 10)\n    },\n    user_id: userId,\n    context: additionalContext,\n    timestamp: new Date().toISOString()\n  }}];\n  \n} catch (e) {\n  return [{ json: {\n    source: 'unknown',\n    is_valid: false,\n    parse_error: 'PARSE_EXCEPTION: ' + (e.message || 'Unknown'),\n    timestamp: new Date().toISOString()\n  }}];\n}"
+      },
+      "id": "002e12f0-5b88-4213-9299-6c633b513923",
+      "name": "Validate and Parse Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3632,
+        1376
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// REDACT PII - Protecci\u00f3n de Datos Sensibles\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: { redact_error: 'NO_INPUT', timestamp: new Date().toISOString() } }];\n  }\n  \n  // Lista ampliada de patrones sensibles\n  const sensitivePatterns = [\n    // Datos personales\n    'email', 'phone', 'telefono', 'celular', 'movil',\n    'name', 'nombre', 'first_name', 'last_name', 'apellido',\n    'rut', 'dni', 'cedula', 'passport', 'pasaporte',\n    'address', 'direccion', 'domicilio',\n    // Identificadores\n    'telegram_id', 'telegram_user', 'chat_id', 'user_id',\n    // Seguridad\n    'password', 'passwd', 'pwd', 'contrasena', 'clave',\n    'token', 'access_token', 'refresh_token', 'auth_token', 'bearer',\n    'secret', 'api_key', 'apikey', 'private_key', 'secret_key',\n    'authorization', 'auth_header',\n    // Financieros\n    'credit_card', 'card_number', 'tarjeta', 'cvv', 'cvc', 'ccv',\n    'bank_account', 'cuenta_bancaria', 'iban', 'swift',\n    // Sesi\u00f3n\n    'session_id', 'session_token', 'cookie',\n    'ip_address', 'ip_addr', 'client_ip', 'remote_addr', 'x_forwarded'\n  ];\n  \n  function shouldRedact(key) {\n    if (!key || typeof key !== 'string') return false;\n    const lowerKey = key.toLowerCase();\n    return sensitivePatterns.some(pattern => lowerKey.includes(pattern));\n  }\n  \n  function redactValue(val) {\n    if (val === null || val === undefined) return val;\n    const str = String(val);\n    if (str.length === 0) return str;\n    if (str.length <= 4) return '****';\n    if (str.length <= 8) return str.substring(0, 1) + '****' + str.substring(str.length - 1);\n    return str.substring(0, 2) + '****' + str.substring(str.length - 2);\n  }\n  \n  function processValue(val, key) {\n    if (val === null || val === undefined) return val;\n    \n    if (shouldRedact(key)) {\n      return redactValue(val);\n    }\n    \n    if (Array.isArray(val)) {\n      return val.map((item, idx) => processValue(item, String(idx)));\n    }\n    \n    if (typeof val === 'object') {\n      const result = {};\n      for (const k of Object.keys(val)) {\n        result[k] = processValue(val[k], k);\n      }\n      return result;\n    }\n    \n    // Detectar patrones sensibles por valor\n    if (typeof val === 'string') {\n      // Email\n      if (/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(val)) {\n        return redactValue(val);\n      }\n      // JWT\n      if (/^eyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]*$/.test(val)) {\n        return val.substring(0, 10) + '...REDACTED_JWT';\n      }\n      // Credit Card\n      if (/^\\d{13,19}$/.test(val.replace(/[\\s-]/g, ''))) {\n        return '****-****-****-' + val.slice(-4);\n      }\n    }\n    \n    return val;\n  }\n  \n  const safeData = processValue(JSON.parse(JSON.stringify(item.json)), 'root');\n  \n  return [{ json: safeData }];\n  \n} catch (e) {\n  return [{ json: {\n    redact_error: 'REDACTION_FAILED: ' + (e.message || 'Unknown'),\n    source: $input.first()?.json?.source || 'unknown',\n    is_valid: false,\n    timestamp: new Date().toISOString()\n  }}];\n}"
+      },
+      "id": "865748d0-d851-49b3-95ef-2aaa8a266431",
       "name": "Redact PII",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        250,
-        0
+        -3392,
+        1376
       ]
     },
     {
       "parameters": {
-        "operation": "insert",
-        "schema": "public",
-        "table": "system_errors",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "workflow_name": "={{ $json.workflow.name }}",
-            "workflow_execution_id": "={{ $json.execution.id }}",
-            "error_message": "={{ $json.error.message }}",
-            "error_stack": "={{ JSON.stringify($json.error.stack) }}",
-            "error_context": "={{ JSON.stringify({ node: $json.execution.lastNodeExecuted, workflowId: $json.workflow.id }) }}"
-          }
+        "jsCode": "// ============================================\n// CLASSIFY SEVERITY - Clasificaci\u00f3n Autom\u00e1tica\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      severity: 'HIGH',\n      severity_reason: 'COULD_NOT_PARSE',\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  const json = item.json;\n  const errorType = json.error?.type || '';\n  const errorMessage = (json.error?.message || '').toLowerCase();\n  const workflowName = (json.workflow?.name || '').toLowerCase();\n  const providedSeverity = json.context?.provided_severity;\n  \n  let severity = 'MEDIUM';\n  let severityReason = 'DEFAULT';\n  \n  // Si se proporcion\u00f3 severidad manualmente, respetarla\n  if (providedSeverity && ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(providedSeverity.toUpperCase())) {\n    severity = providedSeverity.toUpperCase();\n    severityReason = 'PROVIDED_BY_CALLER';\n  } else {\n    // Patrones CRITICAL - Sistema comprometido\n    const criticalPatterns = [\n      'database', 'db connection', 'postgres', 'connection refused',\n      'econnrefused', 'authentication failed', 'credential',\n      'out of memory', 'disk full', 'fatal', 'panic',\n      'ssl', 'certificate', 'permission denied'\n    ];\n    \n    // Patrones HIGH - Funcionalidad importante afectada\n    const highPatterns = [\n      'timeout', 'etimedout', 'unauthorized', '401', '403',\n      'rate limit', 'too many requests', '429',\n      'internal server error', '500', 'bad gateway', '502',\n      'service unavailable', '503', 'telegram', 'payment',\n      'booking', 'reservation', 'appointment'\n    ];\n    \n    // Patrones LOW - Errores menores/esperados\n    const lowPatterns = [\n      'not found', '404', 'validation', 'invalid input',\n      'bad request', '400', 'duplicate', 'already exists',\n      'user cancelled', 'cancelled by user'\n    ];\n    \n    // Workflows cr\u00edticos\n    const criticalWorkflows = [\n      'auth', 'payment', 'error_handler', 'bb_00', 'bb_01', 'bb_02'\n    ];\n    \n    const matchesPatterns = (patterns) => {\n      return patterns.some(p => \n        errorMessage.includes(p) || errorType.toLowerCase().includes(p)\n      );\n    };\n    \n    if (matchesPatterns(criticalPatterns)) {\n      severity = 'CRITICAL';\n      severityReason = 'CRITICAL_PATTERN_MATCH';\n    } else if (matchesPatterns(highPatterns)) {\n      severity = 'HIGH';\n      severityReason = 'HIGH_PATTERN_MATCH';\n    } else if (matchesPatterns(lowPatterns)) {\n      severity = 'LOW';\n      severityReason = 'LOW_PATTERN_MATCH';\n    } else if (criticalWorkflows.some(w => workflowName.includes(w))) {\n      severity = severity === 'LOW' ? 'MEDIUM' : 'HIGH';\n      severityReason = 'CRITICAL_WORKFLOW';\n    }\n    \n    // Error Trigger siempre es al menos MEDIUM\n    if (json.source === 'error_trigger' && severity === 'LOW') {\n      severity = 'MEDIUM';\n      severityReason = 'ERROR_TRIGGER_MINIMUM';\n    }\n  }\n  \n  return [{ json: {\n    ...json,\n    severity: severity,\n    severity_reason: severityReason\n  }}];\n  \n} catch (e) {\n  const inputData = $input.first()?.json || {};\n  return [{ json: {\n    ...inputData,\n    severity: 'HIGH',\n    severity_reason: 'CLASSIFICATION_ERROR: ' + (e.message || 'Unknown')\n  }}];\n}"
+      },
+      "id": "356eb0cb-1ec9-4b90-8022-deb92b049066",
+      "name": "Classify Severity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3136,
+        1376
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM public.app_config WHERE key = 'ADMIN_TELEGRAM_CHAT_ID' AND category = 'notifications' LIMIT 1",
+        "options": {}
+      },
+      "id": "a19edbce-7e63-4bbc-8a0d-1834718f5e93",
+      "name": "Get Admin ChatId",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -2896,
+        1232
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
         }
       },
-      "id": "db_log",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as error_count FROM public.system_errors WHERE workflow_name = $1 AND created_at > NOW() - INTERVAL '5 minutes'",
+        "options": {}
+      },
+      "id": "3c9728ef-9b95-46a4-89b9-ad5bff973a13",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -2896,
+        1424
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "f66f77e9-c3b4-4670-8bc7-4fb7dceab8ba",
+      "name": "Merge Config Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -2640,
+        1376
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS MERGED DATA - Con Detecci\u00f3n de Fallos de DB\n// ============================================\n\ntry {\n  const items = $input.all();\n\n  // ============================================\n  // CONFIGURACI\u00d3N (desde variables de entorno con fallback seguro)\n  // ============================================\n  let envRateLimit = 10;\n  let envAdminChatId = '5391760292';\n  let envBaseUrl = 'https://n8n.example.com';\n  try {\n    envRateLimit = parseInt($env.BB_ERROR_RATE_LIMIT) || 10;\n  } catch (e) {}\n  try {\n    envAdminChatId = $env.BB_DEFAULT_ADMIN_CHAT_ID || '5391760292';\n  } catch (e) {}\n  try {\n    envBaseUrl = $env.N8N_BASE_URL || 'https://n8n.example.com';\n  } catch (e) {}\n\n  const CONFIG = {\n    RATE_LIMIT: envRateLimit,\n    DEFAULT_ADMIN_CHAT_ID: envAdminChatId,\n    N8N_BASE_URL: envBaseUrl\n  };\n\n  if (!items || items.length === 0) {\n    return [{ json: {\n      can_send_alert: true,\n      admin_chat_id: CONFIG.DEFAULT_ADMIN_CHAT_ID,\n      rate_limit_exceeded: false,\n      error_count_5min: 0,\n      db_unreachable: true,\n      system_warning: 'DB_UNREACHABLE_NO_ITEMS',\n      merge_error: 'NO_ITEMS',\n      severity: 'CRITICAL',\n      severity_reason: 'DB_FAILURE'\n    }}];\n  }\n\n  // ============================================\n  // PROCESAR ITEMS DEL MERGE\n  // ============================================\n  let errorData = null;\n  let adminChatId = null;\n  let errorCount = 0;\n  let dbConfigError = false;\n  let dbRateLimitError = false;\n  let dbErrorMessages = [];\n\n  for (const item of items) {\n    if (!item || !item.json) continue;\n    const json = item.json;\n\n    if (json.error || (json.message && typeof json.message === 'string' &&\n        (json.message.includes('error') || json.message.includes('ECONNREFUSED') ||\n         json.message.includes('timeout') || json.message.includes('connect')))) {\n      dbErrorMessages.push(json.message || json.error || 'Unknown DB error');\n\n      if (!adminChatId && !json.error_count) {\n        dbConfigError = true;\n      }\n      if (json.error_count === undefined && !json.value) {\n        dbRateLimitError = true;\n      }\n    }\n\n    if (json.workflow && json.execution && json.error) {\n      errorData = json;\n    }\n\n    if (json.value && !json.workflow && !json.error) {\n      adminChatId = json.value;\n    }\n\n    if (json.error_count !== undefined && !isNaN(parseInt(json.error_count))) {\n      errorCount = parseInt(json.error_count) || 0;\n    }\n  }\n\n  if (!errorData) {\n    for (const item of items) {\n      if (item?.json?.workflow || item?.json?.source) {\n        errorData = item.json;\n        break;\n      }\n    }\n    if (!errorData) {\n      errorData = items[0]?.json || {};\n    }\n  }\n\n  // ============================================\n  // DETECTAR FALLO DE DB Y AJUSTAR SEVERIDAD\n  // ============================================\n  const dbUnreachable = dbConfigError || dbRateLimitError;\n  let finalSeverity = errorData.severity || 'MEDIUM';\n  let severityReason = errorData.severity_reason || 'DEFAULT';\n  let systemWarning = null;\n\n  if (dbUnreachable) {\n    finalSeverity = 'CRITICAL';\n    severityReason = 'DB_UNREACHABLE';\n    systemWarning = '\u26a0\ufe0f SYSTEM WARNING: DB UNREACHABLE - ' + dbErrorMessages.join('; ');\n\n    console.error('BB_00: Database unreachable!');\n    console.error('BB_00: Config query failed:', dbConfigError);\n    console.error('BB_00: Rate limit query failed:', dbRateLimitError);\n    console.error('BB_00: Errors:', dbErrorMessages);\n  }\n\n  // ============================================\n  // DETERMINAR CHAT ID Y RATE LIMIT\n  // ============================================\n  const finalChatId = adminChatId || CONFIG.DEFAULT_ADMIN_CHAT_ID;\n  const rateLimitExceeded = errorCount >= CONFIG.RATE_LIMIT;\n\n  const canSendAlert = (finalSeverity === 'CRITICAL') || !rateLimitExceeded;\n\n  // ============================================\n  // CONSTRUIR RESULTADO\n  // ============================================\n  return [{ json: {\n    ...errorData,\n    severity: finalSeverity,\n    severity_reason: severityReason,\n    admin_chat_id: finalChatId,\n    error_count_5min: errorCount,\n    rate_limit: CONFIG.RATE_LIMIT,\n    rate_limit_exceeded: rateLimitExceeded,\n    can_send_alert: canSendAlert,\n    db_unreachable: dbUnreachable,\n    db_config_error: dbConfigError,\n    db_rate_limit_error: dbRateLimitError,\n    system_warning: systemWarning,\n    n8n_base_url: CONFIG.N8N_BASE_URL\n  }}];\n\n} catch (e) {\n  const fallbackData = $input.first()?.json || {};\n  let DEFAULT_CHAT_ID = '5391760292';\n  try {\n    DEFAULT_CHAT_ID = $env.BB_DEFAULT_ADMIN_CHAT_ID || '5391760292';\n  } catch (envErr) {}\n\n  console.error('BB_00: Process Merged Data CRITICAL FAILURE:', e.message);\n\n  return [{ json: {\n    ...fallbackData,\n    severity: 'CRITICAL',\n    severity_reason: 'PROCESS_EXCEPTION',\n    admin_chat_id: DEFAULT_CHAT_ID,\n    error_count_5min: 0,\n    rate_limit: 10,\n    rate_limit_exceeded: false,\n    can_send_alert: true,\n    db_unreachable: true,\n    system_warning: '\u26a0\ufe0f SYSTEM WARNING: PROCESS_EXCEPTION - ' + (e.message || 'Unknown'),\n    merge_error: 'PROCESS_EXCEPTION: ' + (e.message || 'Unknown')\n  }}];\n}"
+      },
+      "id": "fedb12e1-6d7a-48fa-ae5f-28c6ae18c9c8",
+      "name": "Process Merged Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2384,
+        1376
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.system_errors (\n  workflow_name,\n  workflow_execution_id,\n  error_type,\n  severity,\n  error_message,\n  error_stack,\n  error_context,\n  user_id,\n  created_at\n) VALUES (\n  $1,\n  $2,\n  $3,\n  $4,\n  $5,\n  $6,\n  $7::jsonb,\n  $8::uuid,\n  NOW()\n)",
+        "options": {}
+      },
+      "id": "eff9ad78-d01d-4650-ae52-c785d845c206",
       "name": "Log to DB",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        500,
-        0
+        -2144,
+        1568
       ],
+      "alwaysOutputData": true,
       "credentials": {
         "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
         }
       },
-      "alwaysOutputData": true
+      "continueOnFail": true
     },
     {
       "parameters": {
-        "chatId": "5391760292",
-        "text": "={{ \"\ud83d\udea8 <b>Error en AutoAgenda</b>\n\n<b>WF:</b> \" + $json.workflow.name + \"\n<b>Nodo:</b> \" + $json.execution.lastNodeExecuted + \"\n<b>Msg:</b> \" + $json.error.message }}",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "can-send",
+                    "leftValue": "={{ $json.can_send_alert }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "allMatchingOutputs": false
+        }
+      },
+      "id": "715b7181-69a7-46c4-b8d1-1eee63de2047",
+      "name": "Should Send Alert",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -2144,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT TELEGRAM MESSAGE - Con Inline Keyboard\n// ============================================\n\ntry {\n  const json = $input.first()?.json || {};\n  \n  // Emojis por severidad\n  const severityConfig = {\n    'CRITICAL': { emoji: '\ud83d\udd34', color: 'ROJO' },\n    'HIGH': { emoji: '\ud83d\udfe0', color: 'NARANJA' },\n    'MEDIUM': { emoji: '\ud83d\udfe1', color: 'AMARILLO' },\n    'LOW': { emoji: '\ud83d\udfe2', color: 'VERDE' }\n  };\n  \n  const severity = json.severity || 'MEDIUM';\n  const config = severityConfig[severity] || severityConfig['MEDIUM'];\n  const emoji = config.emoji;\n  \n  // Datos del error\n  const workflowName = json.workflow?.name || 'UNKNOWN';\n  const workflowId = json.workflow?.id || '';\n  const lastNode = json.execution?.last_node || 'UNKNOWN';\n  const executionId = json.execution?.id || 'N/A';\n  const errorType = json.error?.type || 'UNKNOWN';\n  const source = json.source === 'error_trigger' ? '\ud83d\udd04 Auto' : '\ud83d\udcde Manual';\n  \n  // Truncar mensaje de error\n  let errorMessage = json.error?.message || 'UNKNOWN ERROR';\n  errorMessage = errorMessage.substring(0, 400);\n  // Escapar HTML\n  errorMessage = errorMessage\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n  \n  // System Warning (si hay fallo de DB)\n  const systemWarning = json.system_warning \n    ? `\\n\\n\u26a0\ufe0f <b>ALERTA DE SISTEMA:</b>\\n<code>${json.system_warning.substring(0, 200)}</code>`\n    : '';\n  \n  // Rate limit info\n  const rateInfo = json.error_count_5min > 0 \n    ? `\\n\\n\u23f1\ufe0f <i>Errores recientes: ${json.error_count_5min}/${json.rate_limit} en 5min</i>`\n    : '';\n  \n  // DB Status\n  const dbStatus = json.db_unreachable \n    ? '\\n\ud83d\udd0c <b>DB:</b> \u274c UNREACHABLE' \n    : '';\n  \n  // Timestamp formateado\n  const timestamp = new Date().toLocaleString('es-CL', { \n    timeZone: 'America/Santiago',\n    dateStyle: 'short',\n    timeStyle: 'medium'\n  });\n  \n  // ============================================\n  // CONSTRUIR MENSAJE\n  // ============================================\n  const message = `${emoji} <b>ERROR EN AUTOAGENDA</b> ${emoji}\n\n` +\n    `<b>Severidad:</b> ${severity}\\n` +\n    `<b>Workflow:</b> ${workflowName}\\n` +\n    `<b>Nodo:</b> ${lastNode}\\n` +\n    `<b>Tipo:</b> ${errorType}\\n` +\n    `<b>Fuente:</b> ${source}` +\n    dbStatus +\n    systemWarning +\n    `\\n\\n<b>Mensaje:</b>\\n<code>${errorMessage}</code>` +\n    `\\n\\n<b>Execution ID:</b>\\n<code>${executionId}</code>` +\n    rateInfo +\n    `\\n\\n<i>\ud83d\udcc5 ${timestamp}</i>`;\n  \n  // ============================================\n  // INLINE KEYBOARD (Botones)\n  // ============================================\n  const n8nBaseUrl = json.n8n_base_url || 'https://n8n.example.com';\n  let inlineKeyboard = null;\n  \n  // Solo agregar bot\u00f3n si tenemos workflow ID\n  if (workflowId && executionId && executionId !== 'N/A' && !executionId.startsWith('MANUAL_')) {\n    const executionUrl = `${n8nBaseUrl}/workflow/${workflowId}/executions/${executionId}`;\n    inlineKeyboard = {\n      inline_keyboard: [\n        [\n          { text: '\ud83d\udd0d Ver Ejecuci\u00f3n', url: executionUrl }\n        ]\n      ]\n    };\n  } else if (workflowId) {\n    const workflowUrl = `${n8nBaseUrl}/workflow/${workflowId}`;\n    inlineKeyboard = {\n      inline_keyboard: [\n        [\n          { text: '\ud83d\udccb Ver Workflow', url: workflowUrl }\n        ]\n      ]\n    };\n  }\n  \n  return [{ json: {\n    ...json,\n    telegram_message: message,\n    telegram_chat_id: json.admin_chat_id || '5391760292',\n    telegram_inline_keyboard: inlineKeyboard\n  }}];\n  \n} catch (e) {\n  const json = $input.first()?.json || {};\n  return [{ json: {\n    ...json,\n    telegram_message: `\u26a0\ufe0f <b>Error en AutoAgenda</b>\\n\\nNo se pudo formatear el mensaje.\\n\\n<code>${(e.message || 'Unknown').substring(0, 200)}</code>`,\n    telegram_chat_id: json.admin_chat_id || '5391760292',\n    telegram_inline_keyboard: null\n  }}];\n}"
+      },
+      "id": "8189c220-a32a-40f5-9f97-6875d52a34ab",
+      "name": "Format Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1888,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.telegram_message }}",
         "additionalFields": {
+          "disable_notification": "={{ $json.severity === 'LOW' }}",
           "parse_mode": "HTML"
         }
       },
-      "id": "tg_alert",
+      "id": "cd42c0ba-1b87-471f-830b-de87a756ea3b",
       "name": "Telegram Alert",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        750,
-        0
+        -1632,
+        1168
       ],
+      "webhookId": "ed6b81cc-e12b-40d7-86dd-94f6c2bd5cba",
       "credentials": {
         "telegramApi": {
-          "id": "KGOR7voFnGIJfn1U",
-          "name": "Telegram Bot AutoAgenda"
+          "id": "U8P4P8JT8XwCoIzD",
+          "name": "Telegram Booking"
         }
-      }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// HANDLE TELEGRAM RESULT\n// ============================================\n\ntry {\n  const json = $input.first()?.json || {};\n  \n  // Detectar si Telegram fall\u00f3\n  const telegramFailed = json.error || \n    (json.ok === false) ||\n    (typeof json.message === 'string' && \n     (json.message.includes('error') || json.message.includes('Bad Request')));\n  \n  if (telegramFailed) {\n    console.error('='.repeat(60));\n    console.error('BB_00 FALLBACK - TELEGRAM FAILED');\n    console.error('='.repeat(60));\n    console.error('Workflow:', json.workflow?.name || 'UNKNOWN');\n    console.error('Severity:', json.severity || 'UNKNOWN');\n    console.error('Error:', json.error?.message || 'UNKNOWN');\n    console.error('Telegram Error:', JSON.stringify(json.message || json.error || 'Unknown'));\n    console.error('='.repeat(60));\n    \n    return [{ json: {\n      success: false,\n      logged_to_db: true,\n      telegram_sent: false,\n      fallback_used: true,\n      fallback_method: 'console_log',\n      original_workflow: json.workflow?.name,\n      original_severity: json.severity,\n      telegram_error: json.message || json.error,\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  return [{ json: {\n    success: true,\n    logged_to_db: true,\n    telegram_sent: true,\n    fallback_used: false,\n    workflow_name: json.workflow?.name,\n    severity: json.severity,\n    message_id: json.message_id || json.result?.message_id,\n    timestamp: new Date().toISOString()\n  }}];\n  \n} catch (e) {\n  console.error('BB_00 CRITICAL FAILURE in Handle Telegram Result:', e.message);\n  return [{ json: {\n    success: false,\n    critical_failure: true,\n    error: e.message,\n    timestamp: new Date().toISOString()\n  }}];\n}"
+      },
+      "id": "e972c9fd-cb18-49cc-80d2-8508f685bdc3",
+      "name": "Handle Telegram Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// SKIP ALERT - Rate Limit Exceeded\n// ============================================\n\nconst json = $input.first()?.json || {};\n\nconsole.warn('BB_00: Rate limit exceeded for workflow:', json.workflow?.name);\nconsole.warn('BB_00: Error count in 5min:', json.error_count_5min, '/', json.rate_limit);\n\nreturn [{ json: {\n  success: true,\n  logged_to_db: true,\n  telegram_sent: false,\n  skipped_reason: 'RATE_LIMIT_EXCEEDED',\n  error_count_5min: json.error_count_5min,\n  rate_limit: json.rate_limit,\n  workflow_name: json.workflow?.name,\n  severity: json.severity,\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "6a5020e9-f316-41c7-b96a-ebca31a29150",
+      "name": "Skip Alert Rate Limited",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1888,
+        1376
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG COMPLETE - Verificar resultado de INSERT\n// ============================================\n\nconst logResult = $input.first()?.json || {};\nconst hasError = logResult.error || \n  (logResult.message && typeof logResult.message === 'string' && \n   logResult.message.includes('error'));\n\nif (hasError) {\n  console.warn('BB_00: Log to DB failed:', logResult.message || logResult.error);\n}\n\nreturn [{ json: {\n  db_logged: !hasError,\n  db_error: hasError ? (logResult.message || 'Unknown DB error') : null,\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "bdfadbaa-ae2d-4826-b99f-6e4d0035dd3d",
+      "name": "Log Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1888,
+        1568
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FINAL RESULT - Combinar todas las ramas\n// ============================================\n\nconst items = $input.all();\n\n// Buscar el resultado m\u00e1s relevante\nlet finalResult = { success: false, no_data: true };\n\nfor (const item of items) {\n  if (item?.json) {\n    // Priorizar resultados con m\u00e1s informaci\u00f3n\n    if (item.json.telegram_sent !== undefined || \n        item.json.skipped_reason || \n        item.json.db_logged !== undefined) {\n      finalResult = { ...finalResult, ...item.json };\n    }\n  }\n}\n\nreturn [{ json: {\n  ...finalResult,\n  handler: 'BB_00_Global_Error_Handler',\n  completed_at: new Date().toISOString()\n}}];"
+      },
+      "id": "c0d8db4c-97c1-443d-96a3-1f542d164c08",
+      "name": "Final Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        1376
+      ]
     }
   ],
   "connections": {
     "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate and Parse Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Strict Input Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Strict Input Validation": {
+      "main": [
+        [
+          {
+            "node": "Validation Passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Passed?": {
+      "main": [
+        [
+          {
+            "node": "Validate and Parse Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and Parse Error": {
       "main": [
         [
           {
@@ -97,6 +425,71 @@
       "main": [
         [
           {
+            "node": "Classify Severity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Severity": {
+      "main": [
+        [
+          {
+            "node": "Get Admin ChatId",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Admin ChatId": {
+      "main": [
+        [
+          {
+            "node": "Merge Config Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Merge Config Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Config Data": {
+      "main": [
+        [
+          {
+            "node": "Process Merged Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Merged Data": {
+      "main": [
+        [
+          {
+            "node": "Should Send Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Log to DB",
             "type": "main",
             "index": 0
@@ -108,7 +501,80 @@
       "main": [
         [
           {
+            "node": "Log Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Complete": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send Alert": {
+      "main": [
+        [
+          {
+            "node": "Format Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Alert Rate Limited",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram Message": {
+      "main": [
+        [
+          {
             "node": "Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "Handle Telegram Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Telegram Result": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Alert Rate Limited": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
             "type": "main",
             "index": 0
           }
@@ -116,7 +582,15 @@
       ]
     }
   },
+  "pinData": {},
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
   }
 }

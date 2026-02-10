@@ -1,0 +1,211 @@
+{
+  "name": "BB_03_Availability_Engine",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst input = $input.item.json;\nconst errors = [];\nconst providerId = input.provider_id;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nif (!providerId) errors.push(\"Missing provider_id\");\nelse if (!uuidRegex.test(providerId)) errors.push(\"Invalid provider_id format\");\n\nif (errors.length > 0) return { json: { error: true, message: errors.join(\"; \"), slots: [] } };\nreturn { json: input };\n"
+      },
+      "id": "guard",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 1
+        }
+      },
+      "id": "check_valid",
+      "name": "Error?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: { slots: [], error: $input.item.json.message }}];"
+      },
+      "id": "return_empty",
+      "name": "Return Empty",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.get_app_config_json() as config"
+      },
+      "id": "db_config",
+      "name": "DB: Get Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        600,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT day_of_week, start_time, end_time FROM schedules WHERE provider_id = $1 AND is_active = true",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $('Guard').item.json.provider_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "db_sched",
+      "name": "DB: Get Schedule",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        800,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst scheduleItems = $items(\"DB: Get Schedule\");\nconst configItem = $items(\"DB: Get Config\")[0]?.json?.config || {};\nconst slotDuration = parseInt(configItem.SLOT_DURATION_MINS || 30);\n\nconst slots = [];\n\nif (scheduleItems.length > 0) {\n    const rule = scheduleItems[0].json;\n    \n    // Parse times (HH:MM:SS)\n    const [startH, startM] = rule.start_time.split(':').map(Number);\n    const [endH, endM] = rule.end_time.split(':').map(Number);\n    \n    let currentTotalMinutes = startH * 60 + startM;\n    const endTotalMinutes = endH * 60 + endM;\n    \n    while (currentTotalMinutes + slotDuration <= endTotalMinutes) {\n        const h = Math.floor(currentTotalMinutes / 60);\n        const m = currentTotalMinutes % 60;\n        const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;\n        slots.push(timeStr);\n        currentTotalMinutes += slotDuration;\n    }\n}\n\nreturn [{ json: { slots: slots, config: { duration: slotDuration } } }];\n"
+      },
+      "id": "calc",
+      "name": "Calc Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error?": {
+      "main": [
+        [
+          {
+            "node": "Return Empty",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB: Get Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Config": {
+      "main": [
+        [
+          {
+            "node": "DB: Get Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Schedule": {
+      "main": [
+        [
+          {
+            "node": "Calc Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

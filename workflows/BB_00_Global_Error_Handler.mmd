@@ -1,0 +1,58 @@
+flowchart TD
+    subgraph ENTRADA[ENTRADA]
+        A1[Error Trigger]
+        A2[Execute Workflow Trigger]
+    end
+    
+    subgraph PROCESAMIENTO[PROCESAMIENTO]
+        B[Validate and Parse Error]
+        C[Redact PII]
+        D[Classify Severity]
+    end
+    
+    subgraph CONFIG[CONFIGURACION PARALELA]
+        E1[Get Admin ChatId]
+        E2[Check Rate Limit]
+        E3[Merge Config Data]
+        E4[Process Merged Data]
+    end
+    
+    subgraph PERSISTENCIA[PERSISTENCIA]
+        F[Log to DB]
+    end
+    
+    subgraph DECISION[DECISION]
+        G{Should Send Alert?}
+    end
+    
+    subgraph NOTIFICACION[NOTIFICACION]
+        H1[Format Telegram Message]
+        H2[Telegram Alert]
+        H3[Handle Telegram Result]
+    end
+    
+    subgraph RATE_LIMIT[RATE LIMITED]
+        I[Skip Alert]
+    end
+    
+    subgraph SALIDA[SALIDA]
+        J[Final Result]
+    end
+    
+    A1 --> B
+    A2 --> B
+    B --> C
+    C --> D
+    D --> E1
+    D --> E2
+    E1 --> E3
+    E2 --> E3
+    E3 --> E4
+    E4 --> F
+    F --> G
+    G -->|can_send true| H1
+    H1 --> H2
+    H2 --> H3
+    H3 --> J
+    G -->|fallback| I
+    I --> J

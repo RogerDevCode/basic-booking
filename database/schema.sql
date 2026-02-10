@@ -2,9 +2,9 @@
 -- PostgreSQL database dump
 --
 
-\restrict Xk3G4UBP9qScT12pfbKamNnvbq3WRzrRahQwNiIVVmpH4EKA8b2WXpwgIAtcCRZ
+\restrict J0ggTJwAabCEkXyJTLWEUEADc0F4fr4JW2JnY0iqZeynEyuq5wz58TSnulXKq4i
 
--- Dumped from database version 17.7 (e429a59)
+-- Dumped from database version 17.7 (bdd1736)
 -- Dumped by pg_dump version 17.7 (Ubuntu 17.7-0ubuntu0.25.10.1)
 
 SET statement_timeout = 0;
@@ -82,7 +82,9 @@ CREATE TYPE public.audit_action AS ENUM (
     'LOGIN_ATTEMPT',
     'SECURITY_BLOCK',
     'DEEP_LINK_ACCESS',
-    'DEEP_LINK_FAILURE'
+    'DEEP_LINK_FAILURE',
+    'ACCESS_CHECK',
+    'ACCESS_DENIED'
 );
 
 
@@ -1467,13 +1469,18 @@ COPY public.admin_users (id, username, password_hash, role, is_active, created_a
 COPY public.app_config (id, key, value, type, category, description, is_public, created_at, updated_at) FROM stdin;
 c88c920f-a75f-43d9-8535-81c3a4677d1a	MAX_ADVANCE_DAYS	30	number	general	Maximum days in advance	t	2026-01-26 21:27:45.344063+00	2026-01-26 22:49:47.644924+00
 ab76a620-58ec-439e-a675-8a07723933b7	TIMEZONE	America/Argentina/Buenos_Aires	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-26 22:49:47.644924+00
+47cd7cb6-d16d-40ce-8f93-31257e1f83e9	ADMIN_TELEGRAM_CHAT_IDS	["5391760292", "123456789"]	json	notifications	Lista de Chat IDs de administradores	f	2026-02-08 18:17:59.561687+00	2026-02-08 18:17:59.561687+00
 89d8b452-a433-4b7f-ad5b-3b06072b3e2e	CALENDAR_MIN_TIME	07:00:00	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
 a1435e9e-e46b-4beb-a0b8-c1a3e47d09a0	CALENDAR_MAX_TIME	21:00:00	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
+ff736ac6-db86-4983-9daa-1f7a88759795	SECURITY_STRIKE_THRESHOLD	5	number	security	Cantidad de strikes para activar notificación crítica a BB_00	f	2026-02-09 14:53:44.646592+00	2026-02-09 14:53:44.646592+00
+35b4b979-9df5-41e7-a961-cdb33663a32f	SECURITY_MAX_TELEGRAM_ID	9999999999999	number	security	Máximo valor permitido para telegram_id (13 dígitos)	f	2026-02-09 14:53:44.646592+00	2026-02-09 14:53:44.646592+00
+0cbc39e6-0138-4441-91ac-2c5c1d840687	SECURITY_MAX_FIRST_NAME_LENGTH	255	number	security	Longitud máxima permitida para first_name	f	2026-02-09 14:53:44.646592+00	2026-02-09 14:53:44.646592+00
 15a2944a-d892-4b3d-ae53-ab31ea179227	COLOR_PRIMARY_HOVER	#1d4ed8	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
 c707aa82-438e-4afc-9989-3b427dbc0020	COLOR_SUCCESS	#10b981	color	branding	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
 99e79f48-b9cf-4c9e-9ea7-5ac35a81cb5d	COLOR_DANGER	#ef4444	color	branding	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
 7a9afa97-4743-494e-a611-c8cbe5914c4e	COLOR_EVENT_CONFIRMED	#dcfce7	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
 b43fea76-743b-481b-8e74-54ba537a4eb0	COLOR_EVENT_PENDING	#fff7ed	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+0c7b1257-b6c4-4e55-8d57-756579f4cc96	SECURITY_MAX_USERNAME_LENGTH	32	number	security	Longitud máxima permitida para username de Telegram	f	2026-02-09 14:53:44.646592+00	2026-02-09 14:53:44.646592+00
 ae1b0424-9da8-42d1-a2f2-ddcb044dd5e5	BOOKING_MIN_NOTICE_HOURS	2	number	business	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
 408c1b06-4f9b-4d6c-b4be-bec6fb77c485	BOOKING_MAX_DAYS_IN_ADVANCE	60	number	rules	Días máximos a futuro para reservar	t	2026-01-23 18:47:03.171944+00	2026-01-23 18:47:03.171944+00
 614d2495-795f-4263-98f8-406c8ceb0c87	MIN_DURATION_MIN	15	number	business	\N	t	2026-01-22 18:06:43.27832+00	2026-01-23 18:47:03.171944+00
@@ -1486,6 +1493,7 @@ f60a8412-1a4c-419a-bfa1-1d51882dedd3	APP_TITLE	AutoAgenda Admin	string	branding	
 45a887b5-c1a7-4381-b933-fa6f4f2cf9a2	DEFAULT_SERVICE_ID	a7a019cb-3442-4f57-8877-1b04a1749c01	string	business	\N	t	2026-01-22 18:25:56.253054+00	2026-01-23 18:47:03.171944+00
 97563212-643a-40e4-900f-07958c3ab2eb	TELEGRAM_BOT_USERNAME	AutoAgendaBot	string	telegram	Telegram bot username for BB_09 deep link redirects	t	2026-01-26 00:14:22.426419+00	2026-01-26 22:49:47.644924+00
 de697b7c-78bd-41ba-930f-2e565cf05965	SLOT_DURATION_MINS	30	number	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-26 22:49:47.644924+00
+0f60d681-72d5-4e94-9dd1-90621a479ce3	BB_00_WORKFLOW_ID		string	workflows	ID del workflow BB_00_Global_Error_Handler para notificaciones	f	2026-02-09 14:53:44.646592+00	2026-02-09 14:53:44.646592+00
 d3a31e1a-feb5-44b1-9103-a9e4b8435d73	COLOR_EVENT_TEXT	#0f172a	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
 003006c0-dc55-4093-8ed4-1af37f619730	BOOKING_MAX_NOTICE_DAYS	60	number	business	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
 2a3cf121-3013-4c4a-a718-8b0e3f98ad1b	DEFAULT_DURATION_MIN	30	number	business	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
@@ -1986,6 +1994,9 @@ b501fc07-33f0-49b1-9747-254554c06242	TEST_WORKFLOW	\N	INFO	WARNING	Prueba de not
 f477a18e-855f-4c1d-b777-3aeadec60344	BB***ct	1687	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-26 23:29:10.437242+00
 4de47907-6fea-4fb4-850e-3fce0abc48c8	BB***ct	1689	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-26 23:54:38.2941+00
 afa29a1a-0271-4f4f-bc88-a0df397204fc	BB***ct	1691	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-27 00:11:56.984268+00
+7b2bd72a-9280-4470-82b0-1bb23f17a91c	Ex***ow	231	\N	\N	UNKNOWN ERROR	[]	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 17:32:06.555288+00
+c26c65a5-0ee7-4a36-9593-5375b47ba5dd	Ex***ow	231	\N	\N	Example Error Message	"Stacktrace"	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 18:11:04.948155+00
+f0e2110c-4ebf-443a-b2a4-38e973b43b79	Ex***ow	231	\N	\N	Example Error Message	"Stacktrace"	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 19:55:42.003929+00
 \.
 
 
@@ -2516,6 +2527,13 @@ CREATE INDEX idx_se_workflow ON public.system_errors USING btree (workflow_name)
 
 
 --
+-- Name: idx_security_firewall_entity; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_security_firewall_entity ON public.security_firewall USING btree (entity_id);
+
+
+--
 -- Name: idx_users_role; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -2733,5 +2751,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE cloud_admin IN SCHEMA public GRANT ALL ON TABL
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Xk3G4UBP9qScT12pfbKamNnvbq3WRzrRahQwNiIVVmpH4EKA8b2WXpwgIAtcCRZ
+\unrestrict J0ggTJwAabCEkXyJTLWEUEADc0F4fr4JW2JnY0iqZeynEyuq5wz58TSnulXKq4i
 

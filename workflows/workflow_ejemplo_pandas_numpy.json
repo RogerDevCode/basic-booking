@@ -1,0 +1,89 @@
+{
+  "name": "Ejemplo: Análisis de Datos con Pandas y Numpy",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-node",
+      "name": "Start",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Datos de ejemplo: ventas mensuales\nconst datos = [\n  { mes: 'Enero', ventas: 15000, costos: 8000, region: 'Norte' },\n  { mes: 'Febrero', ventas: 18000, costos: 9000, region: 'Norte' },\n  { mes: 'Marzo', ventas: 22000, costos: 11000, region: 'Norte' },\n  { mes: 'Enero', ventas: 12000, costos: 7000, region: 'Sur' },\n  { mes: 'Febrero', ventas: 14000, costos: 7500, region: 'Sur' },\n  { mes: 'Marzo', ventas: 16000, costos: 8000, region: 'Sur' }\n];\n\nreturn datos.map(item => ({ json: item }));"
+      },
+      "id": "generar-datos",
+      "name": "Generar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import pandas as pd\nimport numpy as np\nimport json\n\n# Obtener datos del nodo anterior\ndata = []\nfor item in _input.all():\n    data.append(item.json)\n\n# Crear DataFrame\ndf = pd.DataFrame(data)\n\n# Calcular métricas\ndf['ganancia'] = df['ventas'] - df['costos'\n]\ndf['margen'] = (df['ganancia'] / df['ventas'] * 100).round(2)\n\n# Estadísticas por región\nestadisticas = df.groupby('region').agg({\n    'ventas': ['sum', 'mean'],\n    'ganancia': ['sum', 'mean'],\n    'margen': 'mean'\n}).round(2)\n\n# Convertir a formato compatible con n8n\nresultado = []\nfor region in estadisticas.index:\n    resultado.append({\n        'region': region,\n        'total_ventas': float(estadisticas.loc[region, ('ventas', 'sum')]),\n        'promedio_ventas': float(estadisticas.loc[region, ('ventas', 'mean')]),\n        'total_ganancia': float(estadisticas.loc[region, ('ganancia', 'sum')]),\n        'promedio_ganancia': float(estadisticas.loc[region, ('ganancia', 'mean')]),\n        'margen_promedio': float(estadisticas.loc[region, ('margen', 'mean')])\n    })\n\nreturn resultado"
+      },
+      "id": "analisis-pandas",
+      "name": "Análisis con Pandas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import numpy as np\n\n# Obtener datos procesados\ndata = []\nfor item in _input.all():\n    data.append(item.json)\n\n# Extraer valores para análisis numpy\nventas = np.array([d['total_ventas'] for d in data])\nganancias = np.array([d['total_ganancia'] for d in data])\n\n# Cálculos estadísticos con numpy\nresultado = {\n    'analisis_ventas': {\n        'total': float(np.sum(ventas)),\n        'promedio': float(np.mean(ventas)),\n        'mediana': float(np.median(ventas)),\n        'desviacion_std': float(np.std(ventas)),\n        'minimo': float(np.min(ventas)),\n        'maximo': float(np.max(ventas)),\n        'rango': float(np.ptp(ventas))\n    },\n    'analisis_ganancias': {\n        'total': float(np.sum(ganancias)),\n        'promedio': float(np.mean(ganancias)),\n        'mediana': float(np.median(ganancias)),\n        'desviacion_std': float(np.std(ganancias))\n    },\n    'datos_regionales': data\n}\n\nreturn [resultado]"
+      },
+      "id": "analisis-numpy",
+      "name": "Estadísticas con Numpy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Generar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar Datos": {
+      "main": [
+        [
+          {
+            "node": "Análisis con Pandas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Análisis con Pandas": {
+      "main": [
+        [
+          {
+            "node": "Estadísticas con Numpy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-02-04T00:00:00.000Z",
+  "versionId": "1"
+}

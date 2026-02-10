@@ -2,185 +2,75 @@
   "name": "BB_02_Security_Firewall",
   "nodes": [
     {
-      "parameters": {},
-      "id": "trigger",
-      "name": "Execute Workflow Trigger",
+      "parameters": {
+        "inputSource": "passthrough"
+      },
       "type": "n8n-nodes-base.executeWorkflowTrigger",
-      "typeVersion": 1,
-      "position": [
-        0,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst input = $input.item.json;\nif (!input) throw new Error('Received empty payload');\nif (!input.user) throw new Error('Missing key: user');\nif (!input.routing) throw new Error('Missing key: routing');\n\nconst tid = input.user.telegram_id;\nif (!tid) throw new Error('user.telegram_id is missing');\n\nreturn {\n    ...input,\n    entity_id: `telegram:${tid}`\n};\n"
-      },
-      "id": "guard",
-      "name": "Guard: Input Schema",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        250,
-        0
-      ]
+      "typeVersion": 1.1,
+      "position": [-4640, 480],
+      "id": "70ca1ea9-8088-4e27-a5d5-f78678ce938f",
+      "name": "When Executed by Another Workflow"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT * FROM security_firewall WHERE entity_id = $1",
+        "query": "SELECT key, value, type\nFROM public.app_config \nWHERE key IN (\n  'SECURITY_STRIKE_THRESHOLD',\n  'SECURITY_MAX_TELEGRAM_ID', \n  'SECURITY_MAX_FIRST_NAME_LENGTH',\n  'SECURITY_MAX_USERNAME_LENGTH',\n  'BB_00_WORKFLOW_ID'\n)\nAND is_public IS NOT NULL",
         "options": {
-          "queryParameters": {
-            "values": [
-              {
-                "value": "={{ $json.entity_id }}"
-              }
-            ]
-          }
+          "queryTimeout": 5
         }
       },
-      "id": "db_fw",
-      "name": "DB: Check Firewall",
+      "id": "46e01510-661c-4a50-a4d7-979553158427",
+      "name": "Load Security Config",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [
-        500,
-        0
-      ],
+      "position": [-4448, 480],
+      "alwaysOutputData": true,
       "credentials": {
         "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
         }
       },
-      "alwaysOutputData": true
+      "continueOnFail": true
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT * FROM users WHERE telegram_id = {{ $node['Guard: Input Schema'].json.user.telegram_id }}::bigint"
+        "jsCode": "// ============================================\n// MERGE CONFIG WITH INPUT\n// Soporta entrada desde Webhook o ExecuteWorkflowTrigger\n// ============================================\n\ntry {\n  // Intentar obtener datos del trigger correcto\n  let triggerData = {};\n  \n  try {\n    // Opción 1: Desde executeWorkflowTrigger (llamada de otro workflow)\n    const execTrigger = $('When Executed by Another Workflow').first();\n    if (execTrigger?.json) {\n      triggerData = execTrigger.json;\n    }\n  } catch (e1) {\n    // No viene de executeWorkflowTrigger, intentar Webhook\n    try {\n      const webhookTrigger = $('Webhook').first();\n      if (webhookTrigger?.json) {\n        // El webhook puede tener los datos en body o directamente en json\n        triggerData = webhookTrigger.json.body || webhookTrigger.json;\n      }\n    } catch (e2) {\n      // Ninguno de los dos, usar objeto vacío\n      triggerData = {};\n    }\n  }\n  \n  const configRows = $input.all().map(item => item.json);\n  \n  // Defaults robustos\n  const config = {\n    SECURITY_STRIKE_THRESHOLD: 5,\n    SECURITY_MAX_TELEGRAM_ID: 9999999999999,\n    SECURITY_MAX_FIRST_NAME_LENGTH: 255,\n    SECURITY_MAX_USERNAME_LENGTH: 32,\n    BB_00_WORKFLOW_ID: null\n  };\n  \n  // Override con valores de DB (con validación)\n  for (const row of configRows) {\n    if (!row.key || !config.hasOwnProperty(row.key)) continue;\n    \n    if (row.type === 'number') {\n      const num = parseInt(row.value, 10);\n      if (!isNaN(num) && num > 0) {\n        config[row.key] = num;\n      }\n    } else if (row.type === 'string' && row.value) {\n      config[row.key] = row.value.trim();\n    }\n  }\n  \n  return [{ json: {\n    ...triggerData,\n    _config: config,\n    _config_loaded: configRows.length > 0\n  }}];\n  \n} catch (e) {\n  // Fallback seguro con defaults\n  return [{ json: {\n    _config: {\n      SECURITY_STRIKE_THRESHOLD: 5,\n      SECURITY_MAX_TELEGRAM_ID: 9999999999999,\n      SECURITY_MAX_FIRST_NAME_LENGTH: 255,\n      SECURITY_MAX_USERNAME_LENGTH: 32,\n      BB_00_WORKFLOW_ID: null\n    },\n    _config_loaded: false,\n    _config_error: e.message\n  }}];\n}"
       },
-      "id": "db_user",
-      "name": "DB: Check User",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        750,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      },
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst firewall = $items(\"DB: Check Firewall\")[0]?.json || {};\nconst user = $items(\"DB: Check User\")[0]?.json || null;\nconst input = $input.item.json;\n\n// 1. FIREWALL CHECK\nif (firewall.is_blocked) {\n    const blockedUntil = new Date(firewall.blocked_until);\n    if (new Date() < blockedUntil) {\n        throw new Error(`SECURITY_BLOCK: User blocked until ${blockedUntil.toISOString()}`);\n    }\n}\n\n// 2. USER BAN CHECK\nif (user && user.deleted_at) {\n    throw new Error('SECURITY_BLOCK: User is banned/deleted permanently.');\n}\n\n// 3. ROUTING DECISION\nlet nextStep = 'register';\nlet role = 'guest';\n\nif (user) {\n    role = user.role || 'user';\n    // Single Tenant: No RUT required for now, or keep logic if needed\n    // Assuming lenient policy for now\n    nextStep = 'authorized'; \n}\n\nreturn {\n    ...input,\n    security: {\n        user_db_id: user?.id,\n        role: role,\n        status: nextStep,\n        strikes: firewall.strike_count || 0\n    }\n};\n"
-      },
-      "id": "logic",
-      "name": "Logic: Security Policy",
+      "id": "013f10c0-fa50-4a30-9a47-21d5e534df26",
+      "name": "Merge Config with Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1000,
-        0
-      ]
+      "position": [-4192, 480]
     },
     {
       "parameters": {
-        "jsCode": "return $input.item.json;"
+        "jsCode": "// ============================================\n// STRICT INPUT VALIDATION\n// Versión mejorada con validaciones adicionales\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      valid: false,\n      error_code: 'NO_INPUT_DATA',\n      error_message: 'Payload vacío o inválido',\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  const input = item.json;\n  const config = input._config || {};\n  const errors = [];\n  \n  // Límites desde configuración\n  const MAX_TELEGRAM_ID = config.SECURITY_MAX_TELEGRAM_ID || 9999999999999;\n  const MAX_FIRST_NAME_LENGTH = config.SECURITY_MAX_FIRST_NAME_LENGTH || 255;\n  const MAX_USERNAME_LENGTH = config.SECURITY_MAX_USERNAME_LENGTH || 32;\n  \n  // ============================================\n  // VALIDAR ESTRUCTURA REQUERIDA\n  // ============================================\n  \n  if (!input.user) {\n    errors.push('Campo \"user\" es requerido');\n  } else if (typeof input.user !== 'object' || input.user === null || Array.isArray(input.user)) {\n    errors.push('Campo \"user\" debe ser un objeto');\n  }\n  \n  // Validar routing (opcional pero debe ser objeto si existe)\n  if (input.routing !== undefined && input.routing !== null) {\n    if (typeof input.routing !== 'object' || Array.isArray(input.routing)) {\n      errors.push('Campo \"routing\" debe ser un objeto si está presente');\n    }\n  }\n  \n  if (errors.length > 0) {\n    return [{ json: {\n      valid: false,\n      error_code: 'INVALID_STRUCTURE',\n      error_message: errors.join('; '),\n      validation_errors: errors,\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  // ============================================\n  // VALIDAR telegram_id (CRÍTICO)\n  // ============================================\n  const tid = input.user.telegram_id;\n  \n  if (tid === undefined || tid === null) {\n    errors.push('user.telegram_id es requerido');\n  } else {\n    let tidNumber;\n    \n    if (typeof tid === 'number') {\n      tidNumber = tid;\n    } else if (typeof tid === 'string') {\n      tidNumber = parseInt(tid, 10);\n      if (isNaN(tidNumber)) {\n        errors.push('user.telegram_id debe ser numérico');\n      }\n    } else {\n      errors.push('user.telegram_id debe ser número o string numérico');\n    }\n    \n    if (tidNumber !== undefined && !isNaN(tidNumber)) {\n      // Validación específica para 0\n      if (tidNumber === 0) {\n        errors.push('user.telegram_id no puede ser 0');\n      }\n      // Validación de rango\n      else if (tidNumber < 0) {\n        errors.push('user.telegram_id debe ser positivo');\n      }\n      else if (tidNumber > MAX_TELEGRAM_ID) {\n        errors.push(`user.telegram_id excede el rango válido (max: ${MAX_TELEGRAM_ID})`);\n      }\n      // Validación de límite inferior realista (Telegram IDs empiezan desde ~51)\n      else if (tidNumber < 10) {\n        errors.push('user.telegram_id demasiado pequeño (mínimo: 10)');\n      }\n    }\n  }\n  \n  // ============================================\n  // VALIDAR CAMPOS OPCIONALES\n  // ============================================\n  \n  // first_name\n  if (input.user.first_name !== undefined && input.user.first_name !== null) {\n    if (typeof input.user.first_name !== 'string') {\n      errors.push('user.first_name debe ser string');\n    } else {\n      const trimmed = input.user.first_name.trim();\n      if (trimmed.length === 0) {\n        errors.push('user.first_name no puede estar vacío');\n      } else if (trimmed.length > MAX_FIRST_NAME_LENGTH) {\n        errors.push(`user.first_name excede ${MAX_FIRST_NAME_LENGTH} caracteres`);\n      }\n    }\n  }\n  \n  // username\n  if (input.user.username !== undefined && input.user.username !== null) {\n    if (typeof input.user.username !== 'string') {\n      errors.push('user.username debe ser string');\n    } else {\n      const trimmed = input.user.username.trim();\n      if (trimmed.length === 0) {\n        errors.push('user.username no puede estar vacío');\n      } else if (trimmed.length > MAX_USERNAME_LENGTH) {\n        errors.push(`user.username excede ${MAX_USERNAME_LENGTH} caracteres`);\n      }\n      // Validar caracteres permitidos en username de Telegram\n      else if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) {\n        errors.push('user.username contiene caracteres inválidos (solo a-z, 0-9, _)');\n      }\n    }\n  }\n  \n  // ============================================\n  // RESULTADO\n  // ============================================\n  if (errors.length > 0) {\n    return [{ json: {\n      valid: false,\n      error_code: 'VALIDATION_FAILED',\n      error_message: errors.join('; '),\n      validation_errors: errors,\n      received_telegram_id: tid,\n      received_type: typeof tid,\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  const normalizedTid = String(input.user.telegram_id).trim();\n  \n  return [{ json: {\n    ...input,\n    valid: true,\n    normalized: {\n      telegram_id: normalizedTid,\n      entity_id: `telegram:${normalizedTid}`\n    },\n    validation_timestamp: new Date().toISOString()\n  }}];\n  \n} catch (e) {\n  return [{ json: {\n    valid: false,\n    error_code: 'VALIDATION_EXCEPTION',\n    error_message: 'Error interno de validación: ' + (e.message || 'Unknown'),\n    timestamp: new Date().toISOString()\n  }}];\n}"
       },
-      "id": "return",
-      "name": "Return Data",
+      "id": "64182853-e2f4-4332-835a-5514f400e0e0",
+      "name": "Strict Input Validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1250,
-        0
-      ]
+      "position": [-3936, 480]
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO audit_logs (table_name, action, performed_by, event_type, event_data) VALUES ('users', 'LOGIN_ATTEMPT', $1, 'FIREWALL_ACCESS', $2)",
-        "options": {
-          "queryParameters": {
-            "values": [
-              {
-                "value": "={{ $node[\"Guard: Input Schema\"] .json.user.telegram_id }}"
-              },
-              {
-                "value": "={{ JSON.stringify($json) }}"
-              }
-            ]
-          }
-        }
-      },
-      "id": "db_log",
-      "name": "DB: Audit Log",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        1250,
-        200
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "test/firewall",
-        "responseMode": "responseNode"
-      },
-      "id": "web_test",
-      "name": "Test Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
-      "position": [
-        0,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\n// Test Validation (Simplified for Restore)\nconst input = $input.item.json.body || $input.item.json;\nif (!input.user?.telegram_id) return [{json:{error:true, message:'Missing telegram_id'}}];\nreturn [{json: input}];\n"
-      },
-      "id": "test_val",
-      "name": "Test: Defensive Validation",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        250,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "rules",
         "rules": {
           "values": [
             {
-              "outputKey": "valid",
               "conditions": {
                 "options": {
                   "caseSensitive": true,
-                  "version": 3
+                  "version": 2
                 },
                 "conditions": [
                   {
                     "id": "check-valid",
-                    "leftValue": "={{ !$json.error }}",
+                    "leftValue": "={{ $json.valid }}",
+                    "rightValue": true,
                     "operator": {
                       "type": "boolean",
-                      "operation": "true"
+                      "operation": "equals"
                     }
                   }
                 ],
@@ -190,157 +80,592 @@
           ]
         },
         "options": {
-          "fallbackOutput": 1
+          "fallbackOutput": "extra",
+          "allMatchingOutputs": false
         }
       },
-      "id": "test_check",
-      "name": "Route: Validation Check",
+      "id": "55d5a934-e847-4716-8091-51100fe37eeb",
+      "name": "Validation OK?",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [
-        500,
-        400
-      ]
+      "position": [-3696, 480]
     },
     {
       "parameters": {
-        "jsCode": "return [{json: { status: 200, message: 'Test OK', received: $input.item.json }}];"
+        "jsCode": "const json = $input.first()?.json || {};\n\nreturn [{ json: {\n  success: false,\n  access: 'error',\n  reason: 'VALIDATION_FAILED',\n  error_code: json.error_code || 'UNKNOWN',\n  error_message: json.error_message || 'Validación fallida',\n  validation_errors: json.validation_errors || [],\n  security: null,\n  timestamp: new Date().toISOString()\n}}];"
       },
-      "id": "test_build",
-      "name": "Test: Build Response",
+      "id": "754c2977-eb25-4c1f-89c2-9ae7ae4a1b4c",
+      "name": "Return Validation Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1000,
-        400
-      ]
+      "position": [-3440, 688]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  u.id as user_id,\n  u.telegram_id as user_telegram_id,\n  u.role as user_role,\n  u.deleted_at as user_deleted_at,\n  u.first_name as user_first_name,\n  u.created_at as user_created_at,\n  sf.id as firewall_id,\n  sf.entity_id as firewall_entity_id,\n  sf.is_blocked as firewall_is_blocked,\n  sf.blocked_until AT TIME ZONE 'UTC' as firewall_blocked_until,\n  COALESCE(sf.strike_count, 0) as firewall_strike_count,\n  sf.last_strike_at as firewall_last_strike_at,\n  CASE \n    WHEN sf.is_blocked = true AND sf.blocked_until > NOW() AT TIME ZONE 'UTC' THEN true\n    ELSE false\n  END as is_currently_blocked,\n  CASE\n    WHEN u.deleted_at IS NOT NULL THEN true\n    ELSE false\n  END as is_user_banned,\n  CASE\n    WHEN u.id IS NOT NULL THEN true\n    ELSE false\n  END as user_exists\nFROM \n  (SELECT $1::text as tid) as input\nLEFT JOIN \n  public.users u ON u.telegram_id::text = input.tid\nLEFT JOIN \n  public.security_firewall sf ON sf.entity_id = 'telegram:' || input.tid",
+        "options": {
+          "queryTimeout": 10,
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.normalized.telegram_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "115958d1-5bef-4062-90b7-be0eaf863ea2",
+      "name": "DB: Security Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [-3440, 480],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE SECURITY DATA\n// Versión mejorada con manejo robusto de errores\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      db_error: true,\n      db_error_message: 'No se recibió respuesta de la base de datos',\n      input_data: null,\n      security_data: null\n    }}];\n  }\n  \n  const json = item.json;\n  \n  // Detectar errores de DB\n  if (json.error || json.message) {\n    return [{ json: {\n      db_error: true,\n      db_error_message: json.message || json.error || 'Error de base de datos',\n      input_data: null,\n      security_data: null\n    }}];\n  }\n  \n  const inputData = $('Strict Input Validation').first()?.json || {};\n  \n  // Construcción segura de securityData con validaciones\n  const securityData = {\n    user_exists: Boolean(json.user_exists),\n    user_id: json.user_id || null,\n    user_role: json.user_role || 'guest',\n    user_deleted_at: json.user_deleted_at || null,\n    is_user_banned: Boolean(json.is_user_banned),\n    firewall_exists: json.firewall_id ? true : false,\n    is_currently_blocked: Boolean(json.is_currently_blocked),\n    blocked_until: json.firewall_blocked_until || null,\n    strike_count: parseInt(json.firewall_strike_count) || 0,\n    last_strike_at: json.firewall_last_strike_at || null,\n    telegram_id: inputData.normalized?.telegram_id || null,\n    entity_id: inputData.normalized?.entity_id || null\n  };\n  \n  return [{ json: {\n    db_error: false,\n    input_data: inputData,\n    security_data: securityData,\n    raw_db_result: json\n  }}];\n  \n} catch (e) {\n  return [{ json: {\n    db_error: true,\n    db_error_message: 'Error procesando datos: ' + (e.message || 'Unknown'),\n    input_data: null,\n    security_data: null\n  }}];\n}"
+      },
+      "id": "330f6213-27d9-4622-aace-33790731a4e8",
+      "name": "Prepare Security Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-3200, 480]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (\n  table_name,\n  record_id,\n  action,\n  event_type,\n  event_data,\n  performed_by,\n  created_at\n) VALUES (\n  'security_firewall',\n  COALESCE($1::uuid, gen_random_uuid()),\n  'ACCESS_CHECK',\n  'FIREWALL_ACCESS_ATTEMPT',\n  $2::jsonb,\n  $3,\n  NOW() AT TIME ZONE 'UTC'\n)\nRETURNING id",
+        "options": {
+          "queryTimeout": 5,
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.security_data?.user_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ telegram_id: $json.security_data?.telegram_id, entity_id: $json.security_data?.entity_id, user_exists: $json.security_data?.user_exists, is_blocked: $json.security_data?.is_currently_blocked, is_banned: $json.security_data?.is_user_banned, strike_count: $json.security_data?.strike_count, timestamp: new Date().toISOString() }) }}"
+              },
+              {
+                "value": "={{ 'telegram:' + ($json.security_data?.telegram_id || 'unknown') }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "939e5064-2360-4ea1-8717-35b6ce5336f9",
+      "name": "Audit: Log Access Attempt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [-2944, 480],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// APPLY SECURITY POLICY\n// Versión mejorada con validaciones adicionales\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      success: false,\n      access: 'error',\n      reason: 'NO_DATA',\n      error_message: 'No se recibieron datos para evaluar',\n      security: null\n    }}];\n  }\n  \n  const prepareData = $('Prepare Security Data').first()?.json || {};\n  const inputData = prepareData.input_data || {};\n  const securityData = prepareData.security_data || {};\n  const dbError = prepareData.db_error || false;\n  const config = inputData._config || {};\n  \n  // ============================================\n  // CASO 0: Error de DB - Fail Secure\n  // ============================================\n  if (dbError) {\n    return [{ json: {\n      success: false,\n      access: 'error',\n      reason: 'DATABASE_ERROR',\n      error_message: prepareData.db_error_message || 'Error de base de datos',\n      retry_allowed: true,\n      security: null,\n      original_input: inputData,\n      _config: config\n    }}];\n  }\n  \n  // ============================================\n  // CASO 1: Bloqueado por Firewall\n  // ============================================\n  if (securityData.is_currently_blocked) {\n    const blockedUntil = securityData.blocked_until \n      ? new Date(securityData.blocked_until).toISOString()\n      : 'indefinido';\n    \n    return [{ json: {\n      success: false,\n      access: 'denied',\n      reason: 'FIREWALL_BLOCKED',\n      error_message: `Acceso bloqueado hasta ${blockedUntil}`,\n      blocked_until: blockedUntil,\n      strike_count: securityData.strike_count,\n      security: {\n        telegram_id: securityData.telegram_id,\n        entity_id: securityData.entity_id,\n        status: 'blocked'\n      },\n      original_input: inputData,\n      _config: config\n    }}];\n  }\n  \n  // ============================================\n  // CASO 2: Baneado permanentemente\n  // ============================================\n  if (securityData.is_user_banned) {\n    return [{ json: {\n      success: false,\n      access: 'denied',\n      reason: 'USER_BANNED',\n      error_message: 'Usuario suspendido permanentemente',\n      security: {\n        telegram_id: securityData.telegram_id,\n        entity_id: securityData.entity_id,\n        user_id: securityData.user_id,\n        status: 'banned'\n      },\n      original_input: inputData,\n      _config: config\n    }}];\n  }\n  \n  // ============================================\n  // CASO 3: Usuario nuevo (no registrado)\n  // ============================================\n  if (!securityData.user_exists) {\n    return [{ json: {\n      success: true,\n      access: 'granted',\n      reason: 'NEW_USER',\n      next_step: 'register',\n      security: {\n        telegram_id: securityData.telegram_id,\n        entity_id: securityData.entity_id,\n        user_id: null,\n        role: 'guest',\n        status: 'new',\n        strike_count: securityData.strike_count\n      },\n      original_input: inputData,\n      _config: config\n    }}];\n  }\n  \n  // ============================================\n  // CASO 4: Usuario existente autorizado\n  // ============================================\n  return [{ json: {\n    success: true,\n    access: 'granted',\n    reason: 'AUTHORIZED',\n    next_step: 'authorized',\n    security: {\n      telegram_id: securityData.telegram_id,\n      entity_id: securityData.entity_id,\n      user_id: securityData.user_id,\n      role: securityData.user_role || 'user',\n      status: 'active',\n      strike_count: securityData.strike_count\n    },\n    original_input: inputData,\n    _config: config\n  }}];\n  \n} catch (e) {\n  return [{ json: {\n    success: false,\n    access: 'error',\n    reason: 'POLICY_EXCEPTION',\n    error_message: 'Error evaluando política: ' + (e.message || 'Unknown'),\n    security: null\n  }}];\n}"
+      },
+      "id": "3e5c32a6-8858-4113-8408-d447c1402193",
+      "name": "Apply Security Policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2688, 480]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "check-granted",
+                    "leftValue": "={{ $json.access }}",
+                    "rightValue": "granted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "check-denied",
+                    "leftValue": "={{ $json.access }}",
+                    "rightValue": "denied",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "allMatchingOutputs": false
+        }
+      },
+      "id": "7fb8aa7e-856d-4a2b-bb57-9dbe42c77895",
+      "name": "Route by Access",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [-2448, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const json = $input.first()?.json || {};\nconst { _config, ...cleanJson } = json;\n\nreturn [{ json: {\n  success: true,\n  access: 'granted',\n  reason: cleanJson.reason || 'AUTHORIZED',\n  next_step: cleanJson.next_step || 'authorized',\n  security: cleanJson.security || {},\n  user: cleanJson.original_input?.user || {},\n  routing: cleanJson.original_input?.routing || {},\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "e2aeb297-2626-4ea0-bc67-84fe6a4e6710",
+      "name": "Return Authorized",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2192, 368]
+    },
+    {
+      "parameters": {
+        "jsCode": "const json = $input.first()?.json || {};\n\nreturn [{ json: {\n  success: false,\n  access: 'denied',\n  reason: json.reason || 'ACCESS_DENIED',\n  error_message: json.error_message || 'Acceso denegado',\n  blocked_until: json.blocked_until || null,\n  strike_count: json.strike_count || 0,\n  security: json.security || {},\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "e0696eb7-9acd-42de-b599-3ccdeb85211c",
+      "name": "Return Denied",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1936, 608]
+    },
+    {
+      "parameters": {
+        "jsCode": "const json = $input.first()?.json || {};\n\nreturn [{ json: {\n  success: false,\n  access: 'error',\n  reason: json.reason || 'SYSTEM_ERROR',\n  error_message: json.error_message || 'Error de sistema',\n  retry_allowed: json.retry_allowed !== false,\n  security: null,\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "7b9ce4f0-ab6b-49f0-b96b-13a1959931d3",
+      "name": "Return Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1920, 1056]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.audit_logs (\n  table_name,\n  record_id,\n  action,\n  event_type,\n  event_data,\n  performed_by,\n  created_at\n) VALUES (\n  'security_firewall',\n  COALESCE($1::uuid, gen_random_uuid()),\n  'ACCESS_DENIED',\n  'FIREWALL_ACCESS_DENIED',\n  $2::jsonb,\n  $3,\n  NOW() AT TIME ZONE 'UTC'\n)",
+        "options": {
+          "queryTimeout": 5,
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.security?.user_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ reason: $json.reason, error_message: $json.error_message, blocked_until: $json.blocked_until, strike_count: $json.strike_count, telegram_id: $json.security?.telegram_id }) }}"
+              },
+              {
+                "value": "={{ 'telegram:' + ($json.security?.telegram_id || 'unknown') }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "b7c57c9c-0548-4695-95ca-cf7d66b1b2a5",
+      "name": "Audit: Log Denied",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [-2208, 544],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE BB_00 NOTIFICATION\n// ============================================\n\nconst json = $input.first()?.json || {};\nconst config = json._config || {};\n\nconst STRIKE_THRESHOLD = config.SECURITY_STRIKE_THRESHOLD || 5;\nconst BB_00_ID = config.BB_00_WORKFLOW_ID || null;\n\nconst shouldNotify = json.reason === 'DATABASE_ERROR' || \n                    json.reason === 'POLICY_EXCEPTION' ||\n                    (json.security?.strike_count || 0) >= STRIKE_THRESHOLD;\n\nif (!shouldNotify || !BB_00_ID) {\n  return [{ json: { \n    skip_notification: true, \n    skip_reason: !BB_00_ID ? 'BB_00_WORKFLOW_ID not configured' : 'Below threshold',\n    ...json \n  }}];\n}\n\nreturn [{ json: {\n  skip_notification: false,\n  bb00_workflow_id: BB_00_ID,\n  workflow_name: 'BB_02_Security_Firewall',\n  node_name: 'Apply Security Policy',\n  error_type: 'SECURITY_' + (json.reason || 'UNKNOWN'),\n  error_message: json.error_message || 'Error de seguridad',\n  severity: json.reason === 'DATABASE_ERROR' ? 'CRITICAL' : 'HIGH',\n  context: {\n    telegram_id: json.security?.telegram_id,\n    access_result: json.access,\n    strike_count: json.security?.strike_count,\n    threshold_used: STRIKE_THRESHOLD\n  }\n}}];"
+      },
+      "id": "813084aa-2810-413d-9864-f88d6e5974c5",
+      "name": "Prepare BB_00 Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2448, 880]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "should-notify",
+                    "leftValue": "={{ $json.skip_notification }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "allMatchingOutputs": false
+        }
+      },
+      "id": "0cd60d87-b1e2-4936-b453-cb3945c630e7",
+      "name": "Should Notify BB_00?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [-2192, 880]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "_Za9GzqB2cS9HVwBglt43",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/_Za9GzqB2cS9HVwBglt43",
+          "cachedResultName": "BB_00_Global_Error_Handler"
+        },
+        "options": {}
+      },
+      "id": "2827239e-b147-47b2-b9eb-a465ebcd7bb8",
+      "name": "Notify BB_00 Critical",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [-1936, 832],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const json = $input.first()?.json || {};\n\nreturn [{ json: {\n  success: false,\n  access: 'error',\n  reason: json.reason || json.error_type || 'SYSTEM_ERROR',\n  error_message: json.error_message || 'Error de sistema',\n  retry_allowed: true,\n  notified_bb00: !json.skip_notification,\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "642777cd-b9b8-48ff-ab1f-4cdaf93961c8",
+      "name": "Return Error After Notify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1696, 880]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "689841d2-b2a8-4329-b118-4e8675a810be",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-4640, 672],
+      "id": "4970f372-9bb9-4ef1-a40c-f34b9a5928e0",
+      "name": "Webhook",
+      "webhookId": "689841d2-b2a8-4329-b118-4e8675a810be"
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}"
+        "responseBody": "={{ $json }}",
+        "options": {}
       },
-      "id": "test_resp",
-      "name": "Test: Respond",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1250,
-        400
-      ]
+      "typeVersion": 1.5,
+      "position": [-1728, 608],
+      "id": "26776cb4-9ad0-4c28-bda1-ce474bafba0e",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [-2000, 368],
+      "id": "b8ff4749-bb93-4ab6-82f5-a60b2bb97530",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [-1488, 880],
+      "id": "6e0f700a-4924-4133-8ac4-a73c3be65345",
+      "name": "Respond to Webhook2"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [-1712, 1056],
+      "id": "cefef376-7ce0-4b37-a7af-ea871606e304",
+      "name": "Respond to Webhook3"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [-3216, 688],
+      "id": "281b41f3-701e-4e81-8a06-65cda4cce643",
+      "name": "Respond to Webhook4"
     }
   ],
   "connections": {
-    "Execute Workflow Trigger": {
+    "When Executed by Another Workflow": {
       "main": [
         [
           {
-            "node": "Guard: Input Schema",
+            "node": "Load Security Config",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard: Input Schema": {
+    "Load Security Config": {
       "main": [
         [
           {
-            "node": "DB: Check Firewall",
+            "node": "Merge Config with Input",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB: Check Firewall": {
+    "Merge Config with Input": {
       "main": [
         [
           {
-            "node": "DB: Check User",
+            "node": "Strict Input Validation",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB: Check User": {
+    "Strict Input Validation": {
       "main": [
         [
           {
-            "node": "Logic: Security Policy",
+            "node": "Validation OK?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Logic: Security Policy": {
+    "Validation OK?": {
       "main": [
         [
           {
-            "node": "Return Data",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "DB: Audit Log",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Test: Build Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Test Webhook": {
-      "main": [
-        [
-          {
-            "node": "Test: Defensive Validation",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Test: Defensive Validation": {
-      "main": [
-        [
-          {
-            "node": "Route: Validation Check",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Route: Validation Check": {
-      "main": [
-        [
-          {
-            "node": "Guard: Input Schema",
+            "node": "DB: Security Check",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Test: Build Response",
+            "node": "Return Validation Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Test: Build Response": {
+    "Return Validation Error": {
       "main": [
         [
           {
-            "node": "Test: Respond",
+            "node": "Respond to Webhook4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Security Check": {
+      "main": [
+        [
+          {
+            "node": "Prepare Security Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Security Data": {
+      "main": [
+        [
+          {
+            "node": "Audit: Log Access Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit: Log Access Attempt": {
+      "main": [
+        [
+          {
+            "node": "Apply Security Policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Security Policy": {
+      "main": [
+        [
+          {
+            "node": "Route by Access",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Access": {
+      "main": [
+        [
+          {
+            "node": "Return Authorized",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Audit: Log Denied",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare BB_00 Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit: Log Denied": {
+      "main": [
+        [
+          {
+            "node": "Return Denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare BB_00 Notification": {
+      "main": [
+        [
+          {
+            "node": "Should Notify BB_00?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Notify BB_00?": {
+      "main": [
+        [
+          {
+            "node": "Notify BB_00 Critical",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify BB_00 Critical": {
+      "main": [
+        [
+          {
+            "node": "Return Error After Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Error After Notify": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Security Config",
             "type": "main",
             "index": 0
           }
@@ -348,7 +673,12 @@
       ]
     }
   },
+  "pinData": {},
   "settings": {
     "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "37e1af476793fff8d83d04975043d462dd665b71d5f42903a4862a8e314c32a9"
   }
 }
