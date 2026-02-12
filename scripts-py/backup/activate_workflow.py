@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script to activate a specific workflow in n8n instance
 """
@@ -81,7 +93,7 @@ def activate_workflow(api_url: str, api_key: str, workflow_id: str) -> bool:
 
 def main():
     # Configuration
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
     API_KEY = get_api_key()
 
     # Workflow ID to activate (the first one from our previous listing)

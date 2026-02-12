@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Plugin de n8n para Qwen
 Este plugin permite a Qwen interactuar con tu instancia de n8n
@@ -37,7 +49,7 @@ class N8NPlugin:
     Proporciona métodos para interactuar con n8n desde Qwen
     """
 
-    def __init__(self, api_url: str = "http://localhost:5678", api_key: str = None):
+    def __init__(self, api_url: str = "https://n8n.stax.ink", api_key: str = None):
         """
         Inicializa el plugin con la configuración de n8n
 

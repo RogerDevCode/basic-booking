@@ -50,7 +50,7 @@ The `N8NCrudAgent` class provides the following methods:
 ```python
 from n8n_crud_agent import N8NCrudAgent
 
-agent = N8NCrudAgent("http://localhost:5678")
+agent = N8NCrudAgent("https://n8n.stax.ink")
 workflows = agent.list_workflows()
 ```
 
@@ -65,12 +65,14 @@ result = qwen_n8n_plugin("list_workflows")
 ## API Key Configuration
 
 Scripts look for API keys in the following order:
+
 1. Environment variables: `N8N_API_KEY` or `N8N_ACCESS_TOKEN`
 2. `.env` file in the scripts-py directory with `N8N_API_KEY` or `N8N_ACCESS_TOKEN`
 
 ## Removed Scripts
 
 The following redundant scripts have been removed as their functionality is now available in the centralized modules:
+
 - `activate_workflow.py`
 - `create_and_activate_workflow.py`
 - `execute_workflow.py`

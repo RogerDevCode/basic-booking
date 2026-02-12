@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script to list all workflows (active and inactive) in n8n instance
 """
@@ -86,7 +98,7 @@ def list_all_workflows(api_url: str, api_key: str) -> Optional[List[Dict]]:
 
 def main():
     # Configuration
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
     API_KEY = get_api_key()
 
     print("Fetching all workflows from n8n...")

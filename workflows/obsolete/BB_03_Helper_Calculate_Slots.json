@@ -1,0 +1,166 @@
+{
+  "name": "BB_03_Helper_Calculate_Slots",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "start-node",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const input = $input.item.json;\n  const errors = [];\n\n  // P0.1: Validación defensiva de slot_duration_mins\n  const slotDuration = input.slot_duration_mins;\n  if (!slotDuration || typeof slotDuration !== 'number') {\n    errors.push('slot_duration_mins is required and must be a number');\n  } else if (slotDuration <= 0 || slotDuration > 1440) {\n    errors.push('slot_duration_mins must be between 1 and 1440 minutes');\n  }\n\n  // Validar schedules\n  const schedules = input.schedules;\n  if (!Array.isArray(schedules) || schedules.length === 0) {\n    errors.push('schedules is required and must be a non-empty array');\n  }\n\n  // Validar date_range\n  const dateRange = input.date_range;\n  if (!dateRange || typeof dateRange !== 'object') {\n    errors.push('date_range is required and must be an object');\n  } else {\n    if (!dateRange.from || !dateRange.to || !dateRange.total_days) {\n      errors.push('date_range must have from, to, and total_days');\n    }\n  }\n\n  // Validar bookings (puede ser array vacío)\n  const bookings = input.bookings;\n  if (!Array.isArray(bookings)) {\n    errors.push('bookings must be an array (can be empty)');\n  }\n\n  // Validar otros campos requeridos\n  if (!input.provider_id) errors.push('provider_id is required');\n  if (!input.timezone) errors.push('timezone is required');\n  if (input.min_advance_hours === undefined) errors.push('min_advance_hours is required');\n  if (input.max_slots === undefined) errors.push('max_slots is required');\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'INVALID_INPUT',\n        error_message: 'Input validation failed: ' + errors.join('; '),\n        data: null\n      }\n    }];\n  }\n\n  // Pasar datos validados al siguiente nodo\n  return [{ json: { success: true, ...input } }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'VALIDATION_ERROR',\n      error_message: 'Error validating input: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "validate-input-node",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "validation-failed",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-valid-node",
+      "name": "Switch: Valid?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        700,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const input = $input.item.json;\n  // Retornar error tal cual\n  return [{ json: input }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'System error',\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "format-error-node",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const {\n    provider_id,\n    provider_name,\n    provider_slug,\n    slot_duration_mins,\n    timezone,\n    min_advance_hours,\n    schedules,\n    date_range,\n    bookings,\n    max_slots\n  } = $input.item.json;\n\n  // Mapeo day_of_week enum -> JS getDay()\n  const dayMap = {\n    'Sunday': 0,\n    'Monday': 1,\n    'Tuesday': 2,\n    'Wednesday': 3,\n    'Thursday': 4,\n    'Friday': 5,\n    'Saturday': 6\n  };\n\n  // Invertir para display\n  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n\n  // Indexar schedules por día numérico\n  const scheduleByDay = {};\n  for (const s of schedules) {\n    const dayNum = dayMap[s.day_of_week];\n    if (dayNum !== undefined) {\n      if (!scheduleByDay[dayNum]) scheduleByDay[dayNum] = [];\n      scheduleByDay[dayNum].push({\n        startTime: s.start_time,\n        endTime: s.end_time\n      });\n    } else {\n      // Log warning si day_of_week desconocido (Bug Fix #2)\n      console.warn(`Unknown day_of_week: ${s.day_of_week}`);\n    }\n  }\n\n  // Normalizar schedules por dia (ordenar y merge de intervalos)\n  function mergeIntervals(intervals) {\n    const parsed = intervals\n      .map(i => {\n        const [sh, sm] = i.startTime.split(':').map(Number);\n        const [eh, em] = i.endTime.split(':').map(Number);\n        return { start: sh * 60 + sm, end: eh * 60 + em, startTime: i.startTime, endTime: i.endTime };\n      })\n      .sort((a, b) => a.start - b.start);\n\n    const merged = [];\n    for (const interval of parsed) {\n      if (!merged.length || interval.start > merged[merged.length - 1].end) {\n        merged.push({ start: interval.start, end: interval.end });\n      } else {\n        merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, interval.end);\n      }\n    }\n\n    return merged.map(i => ({\n      startTime: `${String(Math.floor(i.start / 60)).padStart(2, '0')}:${String(i.start % 60).padStart(2, '0')}`,\n      endTime: `${String(Math.floor(i.end / 60)).padStart(2, '0')}:${String(i.end % 60).padStart(2, '0')}`\n    }));\n  }\n\n  for (const dayKey of Object.keys(scheduleByDay)) {\n    scheduleByDay[dayKey] = mergeIntervals(scheduleByDay[dayKey]);\n  }\n\n  // Parsear bookings a rangos comparables\n  const bookedSlots = bookings.map(b => ({\n    start: new Date(b.start_time).getTime(),\n    end: new Date(b.end_time).getTime()\n  }));\n\n  // Calcular \"ahora\" para detectar slots pasados\n  const now = new Date();\n  const nowMs = now.getTime();\n  const minAdvanceMs = min_advance_hours * 60 * 60 * 1000;\n\n  // Función: verificar si un slot está reservado\n  function isBooked(slotStartMs, slotEndMs) {\n    return bookedSlots.some(b => {\n      return slotStartMs < b.end && slotEndMs > b.start;\n    });\n  }\n\n  // Generar slots para cada día del rango\n  const dates = [];\n  let totalAvailable = 0;\n  let totalBooked = 0;\n  let totalPast = 0;\n  let totalSlotsCalculated = 0;\n  const MAX_SLOTS = max_slots || 1000; // Límite configurable de slots\n\n  const startDate = new Date(date_range.from + 'T00:00:00');\n  const totalDays = date_range.total_days;\n\n  for (let d = 0; d < totalDays; d++) {\n    const currentDate = new Date(startDate);\n    currentDate.setDate(startDate.getDate() + d);\n    \n    const dateStr = currentDate.toISOString().split('T')[0];\n    const dayOfWeek = currentDate.getDay(); // 0=Sunday\n    const dayName = dayNames[dayOfWeek];\n\n    // Buscar schedule para este día\n    const daySchedules = scheduleByDay[dayOfWeek];\n    \n    if (!daySchedules || daySchedules.length === 0) {\n      // No hay horario para este día, no incluirlo\n      continue;\n    }\n\n    const daySlots = [];\n\n    for (const schedule of daySchedules) {\n      // Parsear start_time y end_time (formato HH:MM:SS o HH:MM)\n      const [startH, startM] = schedule.startTime.split(':').map(Number);\n      const [endH, endM] = schedule.endTime.split(':').map(Number);\n\n      let currentMins = startH * 60 + startM;\n      const endMins = endH * 60 + endM;\n\n      while (currentMins + slot_duration_mins <= endMins) {\n        // P0.2: Verificar límite de slots\n        if (totalSlotsCalculated >= MAX_SLOTS) {\n          return [{\n            json: {\n              success: false,\n              error_code: 'TOO_MANY_SLOTS',\n              error_message: `Calculation would exceed maximum of ${MAX_SLOTS} slots. Please reduce date range or increase slot duration.`,\n              data: null\n            }\n          }];\n        }\n\n        const h = Math.floor(currentMins / 60);\n        const m = currentMins % 60;\n        const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;\n\n        // Crear timestamp del slot para comparaciones\n        const slotDateTime = new Date(`${dateStr}T${timeStr}:00`);\n        const slotStartMs = slotDateTime.getTime();\n        const slotEndMs = slotStartMs + (slot_duration_mins * 60 * 1000);\n\n        let status;\n        if (slotStartMs < nowMs + minAdvanceMs) {\n          status = 'past';\n          totalPast++;\n        } else if (isBooked(slotStartMs, slotEndMs)) {\n          status = 'booked';\n          totalBooked++;\n        } else {\n          status = 'available';\n          totalAvailable++;\n        }\n\n        daySlots.push({ time: timeStr, status: status });\n        currentMins += slot_duration_mins;\n        totalSlotsCalculated++;\n      }\n    }\n\n    if (daySlots.length > 0) {\n      dates.push({\n        date: dateStr,\n        day_name: dayName,\n        slots: daySlots,\n        available_count: daySlots.filter(s => s.status === 'available').length,\n        total_count: daySlots.length\n      });\n    }\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        provider_id: provider_id,\n        provider_name: provider_name,\n        provider_slug: provider_slug,\n        slot_duration_mins: slot_duration_mins,\n        timezone: timezone,\n        date_range: date_range,\n        dates: dates,\n        summary: {\n          total_available: totalAvailable,\n          total_booked: totalBooked,\n          total_past: totalPast,\n          days_with_availability: dates.filter(d => d.available_count > 0).length\n        }\n      }\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'CALCULATION_ERROR',\n      error_message: 'Error calculating slots: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "calculate-slots-node",
+      "name": "Calculate Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const input = $input.item.json;\n  \n  // Pasar resultado tal cual (ya está formateado)\n  return [{ json: input }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error formatting response',\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "format-response-node",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Switch: Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: Valid?": {
+      "main": [
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Calculate Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Slots": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "_Za9GzqB2cS9HVwBglt43",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

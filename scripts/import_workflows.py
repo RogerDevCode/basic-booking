@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts-py')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script para importar workflows a n8n usando la API
 """
@@ -9,7 +21,7 @@ from pathlib import Path
 
 def import_workflows():
     # Configurar la URL base de n8n
-    n8n_url = "http://localhost:5678"
+    n8n_url = "https://n8n.stax.ink"
     
     # Obtener el token de autenticación
     username = os.getenv("N8N_USERNAME", "admin")

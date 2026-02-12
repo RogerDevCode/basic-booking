@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 
 // Configuration
-const N8N_URL = 'http://localhost:5678';
+const N8N_URL = 'https://n8n.stax.ink';
 
 console.log('Fetching workflow count from n8n server...');
 console.log(`n8n server: ${N8N_URL}`);

@@ -1,0 +1,13 @@
+{
+  "text": "/availability",
+  "channel": "telegram",
+  "user_id": "tg:123",
+  "chat_id": "123",
+  "context": {
+    "provider_slug": "proveedor-x"
+  },
+  "date_range": {
+    "start": "2025-01-10",
+    "end": "2025-01-10"
+  }
+}

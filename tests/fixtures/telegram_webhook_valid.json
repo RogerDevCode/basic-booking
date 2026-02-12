@@ -1,0 +1,22 @@
+{
+  "body": {
+    "update_id": 123456789,
+    "message": {
+      "message_id": 1001,
+      "from": {
+        "id": 987654321,
+        "is_bot": false,
+        "first_name": "Ana",
+        "username": "ana_test"
+      },
+      "chat": {
+        "id": 987654321,
+        "first_name": "Ana",
+        "username": "ana_test",
+        "type": "private"
+      },
+      "date": 1710000000,
+      "text": "/availability"
+    }
+  }
+}

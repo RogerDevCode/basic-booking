@@ -1,0 +1,116 @@
+✅ BB_04 REFACTORIZADO - ARQUITECTURA MODULAR
+================================================
+
+ANTES (Monolítico):
+  - 1 workflow con 20 nodos conectados
+  - Difícil de entender visualmente
+  - Difícil de testear partes específicas
+  - Difícil de mantener
+
+DESPUÉS (Modular):
+  - 5 workflows independientes
+  - Cada uno con webhook de testing
+  - Responsabilidad única por módulo
+  - Fácil de entender y mantener
+
+================================================
+WORKFLOWS CREADOS
+================================================
+
+1. BB_04_Main_Orchestrator (11 nodos)
+   └─ Webhook: POST /book-v3
+   └─ Propósito: Orquestador principal que delega
+
+2. BB_04_Validate_Input (2 nodos)
+   └─ Webhook: POST /bb04-validate
+   └─ Propósito: Validar entrada según action
+
+3. BB_04_Booking_Create (14 nodos)
+   └─ Webhook: POST /bb04-create
+   └─ Propósito: SAGA para crear booking
+
+4. BB_04_Booking_Cancel (7 nodos)
+   └─ Webhook: POST /bb04-cancel
+   └─ Propósito: SAGA para cancelar booking
+
+5. BB_04_Booking_Reschedule (12 nodos)
+   └─ Webhook: POST /bb04-reschedule
+   └─ Propósito: SAGA para reagendar booking
+
+TOTAL: 46 nodos distribuidos en 5 workflows modulares
+
+================================================
+ARQUITECTURA VISUAL
+================================================
+
+BB_04_Main_Orchestrator
+  ↓
+  [Webhook] → [Prepare Input]
+      ↓
+      → Call: BB_04_Validate_Input
+            ↓
+         [Valid?] ─┬─ error → [Error Response]
+                   │
+                   └─ ok → [Action Router]
+                              ├─ booking → Call: BB_04_Booking_Create
+                              ├─ cancel → Call: BB_04_Booking_Cancel
+                              └─ reschedule → Call: BB_04_Booking_Reschedule
+                                    ↓
+                              [Success Response]
+
+================================================
+VENTAJAS DE ESTA ARQUITECTURA
+================================================
+
+✅ Separación de responsabilidades
+✅ Cada módulo es testeable independientemente
+✅ Fácil de entender visualmente
+✅ Fácil de mantener y extender
+✅ Reutilizable (Validate_Input usado por todos)
+✅ Despliegue independiente por módulo
+✅ Debugging simplificado
+
+================================================
+TESTING INDIVIDUAL
+================================================
+
+# Test validación
+curl -X POST https://n8n/webhook/bb04-validate \
+  -d '{"action":"booking","user_id":"uuid","provider_id":"uuid",...}'
+
+# Test create booking
+curl -X POST https://n8n/webhook/bb04-create \
+  -d '{"user_id":"uuid","provider_id":"uuid",...}'
+
+# Test cancel
+curl -X POST https://n8n/webhook/bb04-cancel \
+  -d '{"booking_id":"uuid","user_id":"uuid"}'
+
+# Test reschedule
+curl -X POST https://n8n/webhook/bb04-reschedule \
+  -d '{"booking_id":"uuid","new_start_time":"...",...}'
+
+# Test completo (producción)
+curl -X POST https://n8n/webhook/book-v3 \
+  -d '{"action":"booking",...}'
+
+================================================
+PRÓXIMOS PASOS
+================================================
+
+1. Importar los 5 workflows a n8n
+2. Configurar credenciales (Postgres, GCal)
+3. Testear cada módulo independientemente
+4. Testear flujo completo via /book-v3
+5. Agregar auditoría a cada módulo si necesario
+
+================================================
+ARCHIVOS CREADOS
+================================================
+
+workflows/BB_04_Main_Orchestrator.json
+workflows/BB_04_Validate_Input.json
+workflows/BB_04_Booking_Create.json
+workflows/BB_04_Booking_Cancel.json
+workflows/BB_04_Booking_Reschedule.json
+

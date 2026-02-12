@@ -1,0 +1,23 @@
+{
+  "text": "/availability",
+  "channel": "telegram",
+  "user_id": "tg:123",
+  "chat_id": "123",
+  "context": {
+    "provider_slug": "proveedor-x",
+    "date_range": {
+      "start": "2025-01-10T00:00:00Z",
+      "end": "2025-01-11T00:00:00Z"
+    }
+  },
+  "expected": {
+    "success": true,
+    "error_code": null,
+    "error_message": null,
+    "data": {
+      "provider_slug": "proveedor-x",
+      "slots": [],
+      "max_slots_applied": false
+    }
+  }
+}

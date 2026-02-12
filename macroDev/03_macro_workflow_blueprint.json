@@ -1,0 +1,561 @@
+{
+  "name": "BB_10_Macro_Workflow_Blueprint",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "macro-entry",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-entry",
+      "name": "Webhook Entry",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "exec-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "merge-entry",
+      "name": "Merge Entry",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [200, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const item = $input.first();\n  if (!item || !item.json) {\n    return [{ json: { success: false, error_code: 'NO_INPUT', error_message: 'Payload vacío', data: null } }];\n  }\n  const input = item.json.body || item.json;\n  return [{ json: { success: true, error_code: null, error_message: null, data: input } }];\n} catch (e) {\n  return [{ json: { success: false, error_code: 'GUARD_EXCEPTION', error_message: e.message, data: null } }];\n}"
+      },
+      "id": "paranoid-guard",
+      "name": "Paranoid Guard (Macro)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 100]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_02_Security_Firewall",
+          "mode": "list",
+          "cachedResultName": "BB_02_Security_Firewall"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "security-firewall",
+      "name": "BB_02 Security Firewall",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [650, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const item = $input.first();\n  const json = item?.json || {};\n  const data = json.data || json;\n  const textRaw = (data.text || data.message || '').toString();\n  const text = textRaw.trim().toLowerCase();\n\n  let intent = 'unknown';\n  if (!text) intent = 'empty';\n  else if (['/book','/agendar','agendar','reservar','book'].includes(text)) intent = 'booking';\n  else if (['/availability','/disponibilidad','disponibilidad','horarios','horas','slots'].includes(text)) intent = 'availability';\n  else if (['/cancel','/cancelar','cancelar','anular'].includes(text)) intent = 'cancel';\n  else if (['/reschedule','/reprogramar','reprogramar','cambiar hora'].includes(text)) intent = 'reschedule';\n  else if (['/admin','/config','/providers','/dashboard'].includes(text)) intent = 'admin';\n  else if (['/help','/ayuda','ayuda','faq'].includes(text)) intent = 'help';\n\n  return [{ json: { ...json, data: { ...data, text: textRaw, intent } } }];\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTENT_NORMALIZE_FAIL', error_message: e.message, data: null } }];\n}"
+      },
+      "id": "normalize-intent",
+      "name": "Normalize Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 100]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "availability",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-availability",
+                    "leftValue": "={{ $json.data.intent }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "availability"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "booking",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-booking",
+                    "leftValue": "={{ $json.data.intent }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "booking"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "admin",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-admin",
+                    "leftValue": "={{ $json.data.intent }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "admin"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "help",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-help",
+                    "leftValue": "={{ $json.data.intent }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "help"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "cancel",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-cancel",
+                    "leftValue": "={{ $json.data.intent }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "cancel"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "reschedule",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-reschedule",
+                    "leftValue": "={{ $json.data.intent }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "reschedule"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 1
+        }
+      },
+      "id": "intent-router",
+      "name": "Intent Router (Macro)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1050, 100]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_03_00_Main",
+          "mode": "list",
+          "cachedResultName": "BB_03_00_Main"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-availability",
+      "name": "BB_03 Availability Engine",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, -80]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_04_Booking_Transaction",
+          "mode": "list",
+          "cachedResultName": "BB_04_Booking_Transaction"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-booking",
+      "name": "BB_04 Booking Transaction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 40]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_06_Admin_Dashboard",
+          "mode": "list",
+          "cachedResultName": "BB_06_Admin_Dashboard"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-admin",
+      "name": "BB_06 Admin Dashboard",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, error_code: null, error_message: null, data: { message: 'Comandos disponibles: /book, /availability, /cancel, /reschedule, /help' } } }}"
+      },
+      "id": "help-response",
+      "name": "Help Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1300, 280]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_04_Booking_Transaction",
+          "mode": "list",
+          "cachedResultName": "BB_04_Booking_Transaction"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-cancel",
+      "name": "BB_04 Booking Cancel",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 400]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_04_Booking_Transaction",
+          "mode": "list",
+          "cachedResultName": "BB_04_Booking_Transaction"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-reschedule",
+      "name": "BB_04 Booking Reschedule",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 520]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error_code: 'INTENT_UNKNOWN', error_message: 'No se reconoció el comando', data: { suggestions: ['/book','/availability','/help'] } } }}"
+      },
+      "id": "fallback-response",
+      "name": "Fallback Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1300, 640]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_00_Global_Error_Handler",
+          "mode": "list",
+          "cachedResultName": "BB_00_Global_Error_Handler"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "call-error-handler",
+      "name": "BB_00 Global Error Handler",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1550, 640]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1550, 40]
+    }
+  ],
+  "connections": {
+    "Webhook Entry": {
+      "main": [
+        [
+          {
+            "node": "Merge Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Merge Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Entry": {
+      "main": [
+        [
+          {
+            "node": "Paranoid Guard (Macro)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paranoid Guard (Macro)": {
+      "main": [
+        [
+          {
+            "node": "BB_02 Security Firewall",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BB_02 Security Firewall": {
+      "main": [
+        [
+          {
+            "node": "Normalize Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Intent": {
+      "main": [
+        [
+          {
+            "node": "Intent Router (Macro)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Router (Macro)": {
+      "main": [
+        [
+          {
+            "node": "BB_03 Availability Engine",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "BB_04 Booking Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "BB_06 Admin Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Help Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "BB_04 Booking Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "BB_04 Booking Reschedule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BB_03 Availability Engine": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BB_04 Booking Transaction": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BB_06 Admin Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Help Response": {
+      "main": [
+        [
+          {
+            "node": "BB_00 Global Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BB_04 Booking Cancel": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BB_04 Booking Reschedule": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback Response": {
+      "main": [
+        [
+          {
+            "node": "BB_00 Global Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Complete Report: Execution of n8n Workflow "Ejemplo: Análisis de Datos con Pandas y Numpy"
 """
@@ -14,7 +26,7 @@ def get_execution_details(execution_id, api_key):
         'Content-Type': 'application/json'
     }
     
-    url = f"http://localhost:5678/api/v1/executions/{execution_id}"
+    url = f"https://n8n.stax.ink/api/v1/executions/{execution_id}"
     response = requests.get(url, headers=headers)
     
     if response.status_code == 200:
@@ -39,7 +51,7 @@ def main():
         'Content-Type': 'application/json'
     }
     
-    url = f"http://localhost:5678/api/v1/executions?workflowId={WORKFLOW_ID}&limit=5"
+    url = f"https://n8n.stax.ink/api/v1/executions?workflowId={WORKFLOW_ID}&limit=5"
     response = requests.get(url, headers=headers)
     
     if response.status_code == 200:

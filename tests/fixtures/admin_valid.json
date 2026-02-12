@@ -1,0 +1,10 @@
+{
+  "headers": {
+    "authorization": "Bearer VALID.JWT.TOKEN"
+  },
+  "action": "admin.getConfig",
+  "payload": {
+    "request_id": "req_admin_valid_001",
+    "timestamp": "2026-01-29T12:00:00Z"
+  }
+}

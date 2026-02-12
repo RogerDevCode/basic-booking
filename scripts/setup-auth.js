@@ -4,7 +4,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 // Configuration
-const N8N_URL = 'http://localhost:5678';
+const N8N_URL = 'https://n8n.stax.ink';
 const WORKFLOWS_DIR = './workflows';
 
 console.log('Setting up n8n authentication and importing workflows...');

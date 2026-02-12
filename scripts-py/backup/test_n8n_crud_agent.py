@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Test suite for N8N CRUD Agent
 """
@@ -21,7 +33,7 @@ class TestN8NCrudAgent(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Initialize the agent once for all tests"""
-        cls.api_url = "http://localhost:5678"
+        cls.api_url = "https://n8n.stax.ink"
 
         # Get API key from environment variables
         api_key_env = os.environ.get('N8N_API_KEY') or os.environ.get('N8N_ACCESS_TOKEN')

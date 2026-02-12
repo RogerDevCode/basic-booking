@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts-py')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script para cargar el workflow BB_00_Global_Error_Handler al servidor n8n
 usando el agente Python existente en la carpeta scripts-py
@@ -83,8 +95,8 @@ def main():
         print("CONFIGURACIÓN REQUERIDA")
         print("=" * 70)
         print("\nPara cargar el workflow BB_00_Global_Error_Handler, primero debe:")
-        print("\n1. Asegurarse de que el servicio n8n esté corriendo en http://localhost:5678")
-        print("2. Abrir su navegador y navegar a: http://localhost:5678")
+        print("\n1. Asegurarse de que el servicio n8n esté corriendo en https://n8n.stax.ink")
+        print("2. Abrir su navegador y navegar a: https://n8n.stax.ink")
         print("3. Completar el asistente de configuración inicial para crear su cuenta")
         print("4. Ir a 'User Settings' > pestaña 'API'")
         print("5. Hacer clic en 'Create API Key' y copiar la clave generada")

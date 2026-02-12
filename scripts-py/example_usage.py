@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Example script demonstrating how to use the N8N CRUD Agent to create and manage workflows
 """
@@ -15,7 +27,7 @@ from n8n_crud_agent import N8NCrudAgent
 
 def create_example_workflow():
     # Configuration
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
 
     # Initialize the agent (will use N8N_API_KEY or N8N_ACCESS_TOKEN automatically)
     agent = N8NCrudAgent(API_URL)

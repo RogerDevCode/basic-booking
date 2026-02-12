@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict J0ggTJwAabCEkXyJTLWEUEADc0F4fr4JW2JnY0iqZeynEyuq5wz58TSnulXKq4i
+\restrict BNbZHwU5KStetqF8OjPvNmUMCygiAGlYMowbmO16IxB64XkeBcx97lbJNQncfQZ
 
 -- Dumped from database version 17.7 (bdd1736)
 -- Dumped by pg_dump version 17.7 (Ubuntu 17.7-0ubuntu0.25.10.1)
@@ -99,7 +99,8 @@ CREATE TYPE public.booking_status AS ENUM (
     'confirmed',
     'cancelled',
     'completed',
-    'no_show'
+    'no_show',
+    'rescheduled'
 );
 
 
@@ -810,6 +811,47 @@ $$;
 ALTER FUNCTION public.update_updated_at_column() OWNER TO neondb_owner;
 
 --
+-- Name: validate_app_config_availability(); Type: FUNCTION; Schema: public; Owner: neondb_owner
+--
+
+CREATE FUNCTION public.validate_app_config_availability() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  num_value numeric;
+BEGIN
+  IF NEW.key IN ('BOOKING_WINDOW_DAYS', 'MIN_BOOKING_ADVANCE_HOURS', 'MAX_SLOTS_PER_QUERY', 'DEFAULT_DAYS_RANGE') THEN
+    num_value := NEW.value::numeric;
+
+    IF NEW.key = 'BOOKING_WINDOW_DAYS' AND (num_value < 1 OR num_value > 90) THEN
+      RAISE EXCEPTION 'BOOKING_WINDOW_DAYS fuera de rango (1-90)';
+    END IF;
+
+    IF NEW.key = 'MIN_BOOKING_ADVANCE_HOURS' AND (num_value < 0 OR num_value > 72) THEN
+      RAISE EXCEPTION 'MIN_BOOKING_ADVANCE_HOURS fuera de rango (0-72)';
+    END IF;
+
+    IF NEW.key = 'MAX_SLOTS_PER_QUERY' AND (num_value < 100 OR num_value > 2000) THEN
+      RAISE EXCEPTION 'MAX_SLOTS_PER_QUERY fuera de rango (100-2000)';
+    END IF;
+
+    IF NEW.key = 'DEFAULT_DAYS_RANGE' AND (num_value < 1 OR num_value > 30) THEN
+      RAISE EXCEPTION 'DEFAULT_DAYS_RANGE fuera de rango (1-30)';
+    END IF;
+  END IF;
+
+  IF NEW.key = 'TIMEZONE' AND NEW.value !~ '^[A-Za-z]+/[A-Za-z_]+' THEN
+    RAISE EXCEPTION 'TIMEZONE debe tener formato Area/Location';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.validate_app_config_availability() OWNER TO neondb_owner;
+
+--
 -- Name: verify_admin_credentials(text, text); Type: FUNCTION; Schema: public; Owner: neondb_owner
 --
 
@@ -1158,6 +1200,45 @@ COMMENT ON TABLE public.bookings IS 'Booking transactions. Links users, resource
 
 
 --
+-- Name: circuit_breaker_state; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.circuit_breaker_state (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workflow_name character varying(200) NOT NULL,
+    state character varying(20) DEFAULT 'CLOSED'::character varying,
+    failure_count integer DEFAULT 0,
+    last_failure_at timestamp with time zone,
+    opened_at timestamp with time zone,
+    next_attempt_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT circuit_breaker_state_state_check CHECK (((state)::text = ANY ((ARRAY['CLOSED'::character varying, 'OPEN'::character varying, 'HALF_OPEN'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.circuit_breaker_state OWNER TO neondb_owner;
+
+--
+-- Name: error_metrics; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.error_metrics (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    metric_date date NOT NULL,
+    workflow_name character varying(200) NOT NULL,
+    severity character varying(20) NOT NULL,
+    error_count integer DEFAULT 0,
+    first_occurrence timestamp with time zone,
+    last_occurrence timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.error_metrics OWNER TO neondb_owner;
+
+--
 -- Name: notification_configs; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
@@ -1197,6 +1278,12 @@ CREATE TABLE public.notification_queue (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     sent_at timestamp with time zone,
+    next_retry_at timestamp with time zone,
+    channel character varying(50) DEFAULT 'telegram'::character varying,
+    recipient text,
+    payload jsonb DEFAULT '{}'::jsonb,
+    max_retries integer DEFAULT 3,
+    expires_at timestamp with time zone DEFAULT (now() + '24:00:00'::interval),
     CONSTRAINT notification_queue_retry_count_check CHECK (((retry_count >= 0) AND (retry_count <= 10)))
 );
 
@@ -1226,10 +1313,12 @@ CREATE TABLE public.providers (
     created_at timestamp with time zone DEFAULT now(),
     deleted_at timestamp with time zone,
     slug text,
+    slot_duration_mins integer DEFAULT 30 NOT NULL,
     CONSTRAINT check_min_notice_positive CHECK ((min_notice_hours >= 0)),
     CONSTRAINT check_provider_name_not_empty CHECK ((length(TRIM(BOTH FROM name)) > 0)),
     CONSTRAINT check_slot_duration_positive CHECK ((slot_duration_minutes > 0)),
-    CONSTRAINT check_slug_format CHECK ((slug ~* '^[a-z0-9-]+$'::text))
+    CONSTRAINT check_slug_format CHECK ((slug ~* '^[a-z0-9-]+$'::text)),
+    CONSTRAINT valid_slot_duration CHECK (((slot_duration_mins >= 5) AND (slot_duration_mins <= 480)))
 );
 
 
@@ -1326,7 +1415,10 @@ CREATE TABLE public.system_errors (
     error_stack text,
     error_context jsonb,
     user_id uuid,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    resolved_at timestamp with time zone,
+    is_resolved boolean DEFAULT false,
+    resolution_notes text
 );
 
 
@@ -1468,7 +1560,6 @@ COPY public.admin_users (id, username, password_hash, role, is_active, created_a
 
 COPY public.app_config (id, key, value, type, category, description, is_public, created_at, updated_at) FROM stdin;
 c88c920f-a75f-43d9-8535-81c3a4677d1a	MAX_ADVANCE_DAYS	30	number	general	Maximum days in advance	t	2026-01-26 21:27:45.344063+00	2026-01-26 22:49:47.644924+00
-ab76a620-58ec-439e-a675-8a07723933b7	TIMEZONE	America/Argentina/Buenos_Aires	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-26 22:49:47.644924+00
 47cd7cb6-d16d-40ce-8f93-31257e1f83e9	ADMIN_TELEGRAM_CHAT_IDS	["5391760292", "123456789"]	json	notifications	Lista de Chat IDs de administradores	f	2026-02-08 18:17:59.561687+00	2026-02-08 18:17:59.561687+00
 89d8b452-a433-4b7f-ad5b-3b06072b3e2e	CALENDAR_MIN_TIME	07:00:00	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
 a1435e9e-e46b-4beb-a0b8-c1a3e47d09a0	CALENDAR_MAX_TIME	21:00:00	string	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
@@ -1493,10 +1584,13 @@ f60a8412-1a4c-419a-bfa1-1d51882dedd3	APP_TITLE	AutoAgenda Admin	string	branding	
 45a887b5-c1a7-4381-b933-fa6f4f2cf9a2	DEFAULT_SERVICE_ID	a7a019cb-3442-4f57-8877-1b04a1749c01	string	business	\N	t	2026-01-22 18:25:56.253054+00	2026-01-23 18:47:03.171944+00
 97563212-643a-40e4-900f-07958c3ab2eb	TELEGRAM_BOT_USERNAME	AutoAgendaBot	string	telegram	Telegram bot username for BB_09 deep link redirects	t	2026-01-26 00:14:22.426419+00	2026-01-26 22:49:47.644924+00
 de697b7c-78bd-41ba-930f-2e565cf05965	SLOT_DURATION_MINS	30	number	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-26 22:49:47.644924+00
-0f60d681-72d5-4e94-9dd1-90621a479ce3	BB_00_WORKFLOW_ID		string	workflows	ID del workflow BB_00_Global_Error_Handler para notificaciones	f	2026-02-09 14:53:44.646592+00	2026-02-09 14:53:44.646592+00
 d3a31e1a-feb5-44b1-9103-a9e4b8435d73	COLOR_EVENT_TEXT	#0f172a	color	branding	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+0f60d681-72d5-4e94-9dd1-90621a479ce3	BB_00_WORKFLOW_ID	_Za9GzqB2cS9HVwBglt43	string	workflows	ID del workflow BB_00_Global_Error_Handler para notificaciones	f	2026-02-09 14:53:44.646592+00	2026-02-09 23:32:43.856787+00
 003006c0-dc55-4093-8ed4-1af37f619730	BOOKING_MAX_NOTICE_DAYS	60	number	business	\N	t	2026-01-22 16:10:31.763132+00	2026-01-22 19:47:44.609108+00
 2a3cf121-3013-4c4a-a718-8b0e3f98ad1b	DEFAULT_DURATION_MIN	30	number	business	\N	t	2026-01-22 18:06:43.27832+00	2026-01-22 19:47:44.609108+00
+ab76a620-58ec-439e-a675-8a07723933b7	TIMEZONE	America/Santiago	string	system	\N	t	2026-01-22 16:10:31.763132+00	2026-02-10 12:57:27.00693+00
+eb4cd1b3-276d-470c-8200-1f914535d991	BOOKING_WINDOW_DAYS	14	number	booking	\N	t	2026-02-10 12:57:27.00693+00	2026-02-10 12:57:27.00693+00
+91fbd250-dbd4-4553-98e2-2a1be70b1409	MIN_BOOKING_ADVANCE_HOURS	2	number	booking	\N	t	2026-02-10 12:57:27.00693+00	2026-02-10 12:57:27.00693+00
 b18f62d6-36a6-4874-9b51-3f71ff6d2402	ERROR_ALERT_CHAT_ID	5391760292	string	system	\N	f	2026-01-22 18:25:56.253054+00	2026-01-22 19:47:44.609108+00
 8e206285-12e8-442e-8fff-4f6297f2f008	NOTIFICATION_CRON_MINUTES	15	number	notifications	\N	f	2026-01-22 19:47:44.609108+00	2026-01-22 19:47:44.609108+00
 e4cdc31d-f996-44ef-8e63-6edce55cc563	RETRY_WORKER_CRON_MINUTES	5	number	notifications	\N	f	2026-01-22 19:47:44.609108+00	2026-01-22 19:47:44.609108+00
@@ -1505,7 +1599,9 @@ e4cdc31d-f996-44ef-8e63-6edce55cc563	RETRY_WORKER_CRON_MINUTES	5	number	notifica
 920214b9-d67a-4453-9cf7-b548e0865262	SCHEDULE_START_HOUR	9	number	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
 1eead956-a6e6-40e8-be5c-8bb72c1dee3c	SCHEDULE_END_HOUR	18	number	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
 17aaca59-e546-4a26-89c4-fa261498109d	SCHEDULE_DAYS	[1,2,3,4,5]	json	calendar	\N	t	2026-01-22 16:10:31.763132+00	2026-01-23 18:47:03.171944+00
+b8c75c61-7af2-4332-8a83-16da9ce3bf75	MAX_SLOTS_PER_QUERY	1000	number	availability	Limite de slots por consulta.	f	2026-02-11 14:42:43.922462+00	2026-02-11 14:42:43.922462+00
 abc0a678-30e0-4b26-bf3f-e398cdf9dd3e	MIN_NOTICE_HOURS	2	number	general	Minimum notice hours	t	2026-01-26 21:27:45.344063+00	2026-01-26 22:49:47.644924+00
+f39345f4-1142-4027-ab78-488390af23fd	DEFAULT_DAYS_RANGE	14	number	availability	Rango por defecto cuando no se especifica days_range.	f	2026-02-11 14:42:43.922462+00	2026-02-11 14:42:43.922462+00
 \.
 
 
@@ -1710,6 +1806,93 @@ e6839086-53b2-4e08-9fbb-b927b5d23723	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	
 ca293dba-a4b3-4f57-aa74-096bfdea18d5	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	LOGIN_ATTEMPT	{"intent": "🔥💯🚀😎👍"}	\N	123	\N	2026-01-20 23:43:02.293142+00	\N	\N
 dd37d93a-e8c4-498f-9606-e0b5fefd0494	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	LOGIN_ATTEMPT	{"intent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}	\N	123	\N	2026-01-20 23:43:17.179753+00	\N	\N
 a2b1497b-1838-42d1-8ec9-126ffaefccd3	users	b9f03843-eee6-4607-ac5a-496c6faa9ea1	LOGIN_ATTEMPT	{"intent": "test"}	\N	123	\N	2026-01-24 16:45:41.207954+00	\N	\N
+5d96814c-c32b-4d79-90d8-13a6f189f78b	security_firewall	540bd54c-cada-4af7-8658-8e63511d591a	ACCESS_CHECK	\N	\N	800800800	\N	2026-02-09 21:29:55.961995+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "540bd54c-cada-4af7-8658-8e63511d591a", "entity_id": "telegram:800800800", "is_banned": false, "timestamp": "2026-02-09T21:29:55.861Z", "ip_address": null, "is_blocked": false, "user_agent": null, "telegram_id": "800800800", "user_exists": true, "strike_count": 0}
+2e2f1308-737e-4974-ab66-6024f7f196f0	security_firewall	47a581f5-59e0-4b80-9e3b-da8b422f5816	ACCESS_CHECK	\N	\N	800800801	\N	2026-02-09 21:29:56.716418+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "47a581f5-59e0-4b80-9e3b-da8b422f5816", "entity_id": "telegram:800800801", "is_banned": true, "timestamp": "2026-02-09T21:29:56.642Z", "ip_address": null, "is_blocked": false, "user_agent": null, "telegram_id": "800800801", "user_exists": true, "strike_count": 0}
+c544ee3e-42a6-488d-9c4e-c049352c062a	security_firewall	47a581f5-59e0-4b80-9e3b-da8b422f5816	ACCESS_DENIED	\N	\N	800800801	\N	2026-02-09 21:29:56.921122+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "47a581f5-59e0-4b80-9e3b-da8b422f5816", "entity_id": "telegram:800800801", "timestamp": "2026-02-09T21:29:56.853Z", "telegram_id": "800800801", "error_message": "Usuario suspendido permanentemente"}
+28607111-0dcd-4336-82ba-a08d461676b1	security_firewall	e92fd388-78e5-467a-8969-7b266934ce2a	ACCESS_CHECK	\N	\N	800800802	\N	2026-02-09 21:29:57.627518+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "e92fd388-78e5-467a-8969-7b266934ce2a", "entity_id": "telegram:800800802", "is_banned": false, "timestamp": "2026-02-09T21:29:57.560Z", "ip_address": null, "is_blocked": false, "user_agent": null, "telegram_id": "800800802", "user_exists": true, "strike_count": 3}
+eea0c60a-c396-4bcb-8ace-ae2c26b5f4c1	security_firewall	fddc2cd9-ca5f-4c05-bb79-521b46b82523	ACCESS_CHECK	\N	\N	800800803	\N	2026-02-09 21:29:58.356977+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "fddc2cd9-ca5f-4c05-bb79-521b46b82523", "entity_id": "telegram:800800803", "is_banned": false, "timestamp": "2026-02-09T21:29:58.286Z", "ip_address": null, "is_blocked": false, "user_agent": null, "telegram_id": "800800803", "user_exists": true, "strike_count": 6}
+a09bbb22-27c5-4ef5-8bde-2ee24900ee73	security_firewall	f7f1e897-5c96-4194-8e8d-542668e1ccde	ACCESS_CHECK	\N	\N	800800800	\N	2026-02-09 21:44:14.432156+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "f7f1e897-5c96-4194-8e8d-542668e1ccde", "entity_id": "telegram:800800800", "is_banned": false, "timestamp": "2026-02-09T21:44:14.354Z", "is_blocked": false, "telegram_id": "800800800", "user_exists": true, "strike_count": 0}
+6f030ffc-8880-4071-b05f-72471fcdda56	security_firewall	acf7089f-34ec-4816-b4cd-499913978d93	ACCESS_CHECK	\N	\N	800800801	\N	2026-02-09 21:44:15.226404+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "acf7089f-34ec-4816-b4cd-499913978d93", "entity_id": "telegram:800800801", "is_banned": true, "timestamp": "2026-02-09T21:44:15.163Z", "is_blocked": false, "telegram_id": "800800801", "user_exists": true, "strike_count": 0}
+74d12c78-e125-4d94-bf80-67b7e1df60dd	security_firewall	acf7089f-34ec-4816-b4cd-499913978d93	ACCESS_DENIED	\N	\N	800800801	\N	2026-02-09 21:44:15.446946+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "acf7089f-34ec-4816-b4cd-499913978d93", "entity_id": "telegram:800800801", "timestamp": "2026-02-09T21:44:15.375Z", "telegram_id": "800800801", "error_message": "Usuario suspendido permanentemente"}
+2b483a61-7ad7-4f1d-9bf5-d7b6072c8533	security_firewall	ea9eae92-cba3-4da3-b97e-8de033d25c5c	ACCESS_CHECK	\N	\N	800800802	\N	2026-02-09 21:44:16.15111+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "ea9eae92-cba3-4da3-b97e-8de033d25c5c", "entity_id": "telegram:800800802", "is_banned": false, "timestamp": "2026-02-09T21:44:16.079Z", "is_blocked": false, "telegram_id": "800800802", "user_exists": true, "strike_count": 3}
+10e239d8-9fad-42a6-bc04-48288c8544a6	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:10:56.199175+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
+a706e807-e47b-419e-bf7d-9a99729a7e80	security_firewall	97ff298c-03f8-4458-aab7-9fc70b0aaeb5	ACCESS_CHECK	\N	\N	800800803	\N	2026-02-09 21:44:16.871798+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "97ff298c-03f8-4458-aab7-9fc70b0aaeb5", "entity_id": "telegram:800800803", "is_banned": false, "timestamp": "2026-02-09T21:44:16.802Z", "is_blocked": false, "telegram_id": "800800803", "user_exists": true, "strike_count": 6}
+a10508a5-0046-43c2-bfb0-4aebc8fb12a8	security_firewall	d1aa6090-f045-4c27-a8c8-745a0525fce8	ACCESS_CHECK	\N	\N	800800800	\N	2026-02-09 21:51:34.231634+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "d1aa6090-f045-4c27-a8c8-745a0525fce8", "entity_id": "telegram:800800800", "is_banned": false, "timestamp": "2026-02-09T21:51:34.159Z", "is_blocked": false, "telegram_id": "800800800", "user_exists": true, "strike_count": 0}
+c59cbc12-5c3b-49db-980e-eeb32af96908	security_firewall	2430b7ba-fc2b-4e65-a1ce-3348a8f8e9f7	ACCESS_CHECK	\N	\N	800800801	\N	2026-02-09 21:51:34.939819+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "2430b7ba-fc2b-4e65-a1ce-3348a8f8e9f7", "entity_id": "telegram:800800801", "is_banned": true, "timestamp": "2026-02-09T21:51:34.871Z", "is_blocked": false, "telegram_id": "800800801", "user_exists": true, "strike_count": 0}
+4e3dccae-a808-413c-ac98-852aa2cf67ac	security_firewall	2430b7ba-fc2b-4e65-a1ce-3348a8f8e9f7	ACCESS_DENIED	\N	\N	800800801	\N	2026-02-09 21:51:35.155339+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "2430b7ba-fc2b-4e65-a1ce-3348a8f8e9f7", "entity_id": "telegram:800800801", "timestamp": "2026-02-09T21:51:35.088Z", "telegram_id": "800800801", "error_message": "Usuario suspendido permanentemente"}
+727caa85-4a40-40f7-a0b8-0737057648a9	security_firewall	7f72aa1b-c216-4128-b40d-0befee2bb0a6	ACCESS_CHECK	\N	\N	800800802	\N	2026-02-09 21:51:35.838783+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "7f72aa1b-c216-4128-b40d-0befee2bb0a6", "entity_id": "telegram:800800802", "is_banned": false, "timestamp": "2026-02-09T21:51:35.770Z", "is_blocked": false, "telegram_id": "800800802", "user_exists": true, "strike_count": 3}
+63a0a459-980d-499a-a21a-a722a479aa61	security_firewall	abb2c332-279b-4c37-9dce-5b293def500f	ACCESS_CHECK	\N	\N	800800803	\N	2026-02-09 21:51:36.57333+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "abb2c332-279b-4c37-9dce-5b293def500f", "entity_id": "telegram:800800803", "is_banned": false, "timestamp": "2026-02-09T21:51:36.508Z", "is_blocked": false, "telegram_id": "800800803", "user_exists": true, "strike_count": 6}
+cc1bff5b-8af1-4428-9a52-a096337e9ba3	security_firewall	c93a0716-c401-487b-8013-87fcb8a6d888	ACCESS_CHECK	\N	\N	800800802	\N	2026-02-09 21:52:18.15871+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "c93a0716-c401-487b-8013-87fcb8a6d888", "entity_id": "telegram:800800802", "is_banned": false, "timestamp": "2026-02-09T21:52:18.086Z", "is_blocked": false, "telegram_id": "800800802", "user_exists": true, "strike_count": 3}
+2f6a81b7-4695-4212-bfef-3ea4b3949e5d	security_firewall	cc2358d8-e218-4295-b5ba-8717bd7bb167	ACCESS_CHECK	\N	\N	800800802	\N	2026-02-09 22:15:30.72862+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "cc2358d8-e218-4295-b5ba-8717bd7bb167", "entity_id": "telegram:800800802", "is_banned": false, "timestamp": "2026-02-09T22:15:30.628Z", "is_blocked": true, "telegram_id": "800800802", "user_exists": true, "strike_count": 3}
+a1e135bb-b487-4fd0-a8de-1ae6ef60b326	security_firewall	69cb14d8-ecaa-4eb4-8a62-c2bc105d2db3	ACCESS_DENIED	\N	\N	800800802	\N	2026-02-09 22:15:31.119029+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800802", "timestamp": "2026-02-09T22:15:31.053Z", "telegram_id": "800800802", "strike_count": 3, "blocked_until": "2026-02-10T00:15:12.183Z", "error_message": "Acceso bloqueado hasta 2026-02-10T00:15:12.183Z"}
+0718064d-66f0-4d4e-8c0c-c1b1a9e3b17a	security_firewall	bddd65a5-8910-4383-9963-81dd2c792aee	ACCESS_CHECK	\N	\N	800800800	\N	2026-02-09 22:15:59.267239+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "bddd65a5-8910-4383-9963-81dd2c792aee", "entity_id": "telegram:800800800", "is_banned": false, "timestamp": "2026-02-09T22:15:59.193Z", "is_blocked": false, "telegram_id": "800800800", "user_exists": true, "strike_count": 0}
+35461811-7c2a-44a5-830e-fdfeb19aa02c	security_firewall	0b5cee52-a491-4a74-b941-09db533172ee	ACCESS_CHECK	\N	\N	800800801	\N	2026-02-09 22:15:59.986928+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "0b5cee52-a491-4a74-b941-09db533172ee", "entity_id": "telegram:800800801", "is_banned": true, "timestamp": "2026-02-09T22:15:59.912Z", "is_blocked": false, "telegram_id": "800800801", "user_exists": true, "strike_count": 0}
+8eb15c2f-b6ac-479d-989e-d539080d932c	security_firewall	0b5cee52-a491-4a74-b941-09db533172ee	ACCESS_DENIED	\N	\N	800800801	\N	2026-02-09 22:16:00.186957+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "0b5cee52-a491-4a74-b941-09db533172ee", "entity_id": "telegram:800800801", "timestamp": "2026-02-09T22:16:00.112Z", "telegram_id": "800800801", "error_message": "Usuario suspendido permanentemente"}
+75c6c6ad-8a6c-4917-aea6-f9cf7e0a149e	security_firewall	63130694-5b40-4280-a438-163a4098cbd2	ACCESS_CHECK	\N	\N	800800802	\N	2026-02-09 22:16:00.766752+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "63130694-5b40-4280-a438-163a4098cbd2", "entity_id": "telegram:800800802", "is_banned": false, "timestamp": "2026-02-09T22:16:00.705Z", "is_blocked": true, "telegram_id": "800800802", "user_exists": true, "strike_count": 3}
+47b33b5d-f349-403d-9ad1-7469c7bfed73	security_firewall	1b4a4f8e-741d-47d8-b459-7288d126ac57	ACCESS_DENIED	\N	\N	800800802	\N	2026-02-09 22:16:00.957767+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800802", "timestamp": "2026-02-09T22:16:00.880Z", "telegram_id": "800800802", "strike_count": 3, "blocked_until": "2026-02-10T00:15:55.495Z", "error_message": "Acceso bloqueado hasta 2026-02-10T00:15:55.495Z"}
+c5975556-4457-4868-9c1b-9e8ce9d96327	security_firewall	3ef038ad-631b-4243-8ac0-4fd163e19671	ACCESS_CHECK	\N	\N	800800803	\N	2026-02-09 22:16:01.625064+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "3ef038ad-631b-4243-8ac0-4fd163e19671", "entity_id": "telegram:800800803", "is_banned": false, "timestamp": "2026-02-09T22:16:01.544Z", "is_blocked": false, "telegram_id": "800800803", "user_exists": true, "strike_count": 6}
+51a981eb-4ad4-4758-a056-cba92621630b	security_firewall	6b991a66-cbb1-4910-9507-5f43fc07983a	ACCESS_CHECK	\N	\N	999999999	\N	2026-02-09 22:16:02.298154+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "6b991a66-cbb1-4910-9507-5f43fc07983a", "entity_id": "telegram:999999999", "is_banned": false, "timestamp": "2026-02-09T22:16:02.223Z", "is_blocked": false, "telegram_id": "999999999", "user_exists": true, "strike_count": 0}
+2502a3cf-66d5-4d50-b112-9b4fc20dbb25	security_firewall	92341a81-10f0-4369-b8da-29486bd5f241	ACCESS_CHECK	\N	\N	800800800	\N	2026-02-09 22:23:35.673309+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "92341a81-10f0-4369-b8da-29486bd5f241", "entity_id": "telegram:800800800", "is_banned": false, "timestamp": "2026-02-09T22:23:35.577Z", "is_blocked": false, "telegram_id": "800800800", "user_exists": true, "strike_count": 0}
+690d72a2-1bf9-4cd7-b37a-03c5341f83ae	security_firewall	97792104-97db-42df-9685-cba90cd546cd	ACCESS_CHECK	\N	\N	800800801	\N	2026-02-09 22:23:36.373503+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "97792104-97db-42df-9685-cba90cd546cd", "entity_id": "telegram:800800801", "is_banned": true, "timestamp": "2026-02-09T22:23:36.284Z", "is_blocked": false, "telegram_id": "800800801", "user_exists": true, "strike_count": 0}
+59b42adb-a9df-465e-a293-de33d1373864	security_firewall	97792104-97db-42df-9685-cba90cd546cd	ACCESS_DENIED	\N	\N	800800801	\N	2026-02-09 22:23:36.581693+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "97792104-97db-42df-9685-cba90cd546cd", "entity_id": "telegram:800800801", "timestamp": "2026-02-09T22:23:36.496Z", "telegram_id": "800800801", "error_message": "Usuario suspendido permanentemente"}
+36d34f9a-207c-4fa4-958a-a6240966f0ed	security_firewall	c4f48f21-fa05-4021-8124-ab4c04d9437e	ACCESS_CHECK	\N	\N	anonymous	\N	2026-02-09 23:39:29.528487+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "timestamp": "2026-02-09T23:39:29.426Z"}
+c530b0c0-82e6-434c-acb8-d24d9e61ef73	security_firewall	2ebe8bb0-f382-4043-8b30-6b09833e31a3	ACCESS_CHECK	\N	\N	800800802	\N	2026-02-09 22:23:37.182531+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "2ebe8bb0-f382-4043-8b30-6b09833e31a3", "entity_id": "telegram:800800802", "is_banned": false, "timestamp": "2026-02-09T22:23:37.103Z", "is_blocked": true, "telegram_id": "800800802", "user_exists": true, "strike_count": 3}
+e545c16a-d3fa-4c22-9040-327fdfe9294e	security_firewall	ba642e65-bb99-41be-8e58-5e1ba6f77c6b	ACCESS_DENIED	\N	\N	800800802	\N	2026-02-09 22:23:37.403601+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800802", "timestamp": "2026-02-09T22:23:37.317Z", "telegram_id": "800800802", "strike_count": 3, "blocked_until": "2026-02-10T00:23:31.768Z", "error_message": "Acceso bloqueado hasta 2026-02-10T00:23:31.768Z"}
+6c6726c3-b647-4691-8164-227adb869695	security_firewall	3e6ad3fa-81a3-4968-897c-dbec50bc1f4e	ACCESS_CHECK	\N	\N	800800803	\N	2026-02-09 22:23:38.010277+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "3e6ad3fa-81a3-4968-897c-dbec50bc1f4e", "entity_id": "telegram:800800803", "is_banned": false, "timestamp": "2026-02-09T22:23:37.922Z", "is_blocked": false, "telegram_id": "800800803", "user_exists": true, "strike_count": 6}
+af9eba70-e5c7-453f-83e3-766d220d5014	security_firewall	1bd20457-f754-497c-8cd2-67f8ac340546	ACCESS_CHECK	\N	\N	999999999	\N	2026-02-09 22:23:38.627805+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999999", "is_banned": false, "timestamp": "2026-02-09T22:23:38.537Z", "is_blocked": false, "telegram_id": "999999999", "user_exists": false, "strike_count": 0}
+a4107859-9164-41f1-96fd-30123c6b2895	security_firewall	d5ff81b6-0623-4e62-b462-12f8900df212	ACCESS_CHECK	\N	\N	999999990	\N	2026-02-09 22:38:55.323254+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999990", "is_banned": false, "timestamp": "2026-02-09T22:38:55.212Z", "is_blocked": false, "telegram_id": "999999990", "user_exists": false, "strike_count": 0}
+47682b8c-40c7-45ba-805f-3ad3d210dd78	security_firewall	0e7739db-6689-4ce5-904c-7a03a12e5f6e	ACCESS_CHECK	\N	\N	999999991	\N	2026-02-09 22:38:56.744227+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999991", "is_banned": false, "timestamp": "2026-02-09T22:38:56.638Z", "is_blocked": false, "telegram_id": "999999991", "user_exists": false, "strike_count": 0}
+4a25aee2-60b2-4522-8189-c68cc59f369b	security_firewall	7b65aabd-c1dc-4775-9e5b-a75496adf4ef	ACCESS_CHECK	\N	\N	999999992	\N	2026-02-09 22:38:57.673065+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999992", "is_banned": false, "timestamp": "2026-02-09T22:38:57.571Z", "is_blocked": false, "telegram_id": "999999992", "user_exists": false, "strike_count": 0}
+8c20315d-4452-4ca2-bfc0-6f779728fb78	security_firewall	252d2a76-d038-4d87-b453-3c1b1df75803	ACCESS_CHECK	\N	\N	800800810	\N	2026-02-09 22:38:58.891488+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:800800810", "is_banned": false, "timestamp": "2026-02-09T22:38:58.786Z", "is_blocked": false, "telegram_id": "800800810", "user_exists": false, "strike_count": 2}
+5cdbde15-b4bd-4d27-9f68-f6283c721175	security_firewall	f5ff03f9-3cc2-40a2-9fdd-471fd5d544ed	ACCESS_CHECK	\N	\N	800800811	\N	2026-02-09 22:39:00.223204+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "f5ff03f9-3cc2-40a2-9fdd-471fd5d544ed", "entity_id": "telegram:800800811", "is_banned": false, "timestamp": "2026-02-09T22:39:00.118Z", "is_blocked": false, "telegram_id": "800800811", "user_exists": true, "strike_count": 0}
+d243186d-75ed-494f-8d2a-e04e654d350f	security_firewall	d9bf34f5-f0f8-4aa4-af6f-7453614562c7	ACCESS_CHECK	\N	\N	800800812	\N	2026-02-09 22:39:01.547357+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "d9bf34f5-f0f8-4aa4-af6f-7453614562c7", "entity_id": "telegram:800800812", "is_banned": false, "timestamp": "2026-02-09T22:39:01.450Z", "is_blocked": false, "telegram_id": "800800812", "user_exists": true, "strike_count": 0}
+82c1fee8-8948-47e6-91c0-55e6b43eda3c	security_firewall	8e63a646-cb4f-4e65-b1f5-2a3ee67e3c3e	ACCESS_CHECK	\N	\N	800800813	\N	2026-02-09 22:39:03.392749+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "8e63a646-cb4f-4e65-b1f5-2a3ee67e3c3e", "entity_id": "telegram:800800813", "is_banned": false, "timestamp": "2026-02-09T22:39:03.297Z", "is_blocked": false, "telegram_id": "800800813", "user_exists": true, "strike_count": 3}
+ab1e51fa-b3c7-41e4-a375-b7e785cafee8	security_firewall	21c3c46b-6e4c-4f25-a6d2-c6182f071dcf	ACCESS_CHECK	\N	\N	800800814	\N	2026-02-09 22:39:05.347884+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "21c3c46b-6e4c-4f25-a6d2-c6182f071dcf", "entity_id": "telegram:800800814", "is_banned": false, "timestamp": "2026-02-09T22:39:05.238Z", "is_blocked": false, "telegram_id": "800800814", "user_exists": true, "strike_count": 5}
+e7ec85a3-2ac3-4fc2-ac02-eb92aae7a4e5	security_firewall	3850ce79-ff85-4b21-955e-1d7e5a0a4b36	ACCESS_CHECK	\N	\N	800800815	\N	2026-02-09 22:39:06.568473+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "3850ce79-ff85-4b21-955e-1d7e5a0a4b36", "entity_id": "telegram:800800815", "is_banned": true, "timestamp": "2026-02-09T22:39:06.469Z", "is_blocked": false, "telegram_id": "800800815", "user_exists": true, "strike_count": 0}
+075fbfd3-059f-4f4a-a6b2-48c2f6ae83fd	security_firewall	3850ce79-ff85-4b21-955e-1d7e5a0a4b36	ACCESS_DENIED	\N	\N	800800815	\N	2026-02-09 22:39:06.814784+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "3850ce79-ff85-4b21-955e-1d7e5a0a4b36", "entity_id": "telegram:800800815", "timestamp": "2026-02-09T22:39:06.700Z", "telegram_id": "800800815", "error_message": "Usuario suspendido permanentemente"}
+6f89549b-6eee-4a36-a6c8-b2e554cbb819	security_firewall	34a867d2-18e4-4727-aadc-b0f67e90dca1	ACCESS_CHECK	\N	\N	800800816	\N	2026-02-09 22:39:08.718374+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "34a867d2-18e4-4727-aadc-b0f67e90dca1", "entity_id": "telegram:800800816", "is_banned": true, "timestamp": "2026-02-09T22:39:08.618Z", "is_blocked": true, "telegram_id": "800800816", "user_exists": true, "strike_count": 0}
+af397669-a5c6-4a24-9ae0-0445b1758189	security_firewall	1ae1c0e8-6db0-4912-ab1d-21626d39bbfe	ACCESS_DENIED	\N	\N	800800816	\N	2026-02-09 22:39:08.924224+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800816", "timestamp": "2026-02-09T22:39:08.826Z", "telegram_id": "800800816", "strike_count": 0, "blocked_until": "2026-02-10T00:39:07.585Z", "error_message": "Acceso bloqueado hasta 2026-02-10T00:39:07.585Z"}
+0098a07f-5e10-4142-8522-03fce9b3daad	security_firewall	74ae15a7-523a-4018-a045-acbe75f68cf6	ACCESS_CHECK	\N	\N	800800817	\N	2026-02-09 22:39:10.260638+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "74ae15a7-523a-4018-a045-acbe75f68cf6", "entity_id": "telegram:800800817", "is_banned": true, "timestamp": "2026-02-09T22:39:10.153Z", "is_blocked": false, "telegram_id": "800800817", "user_exists": true, "strike_count": 0}
+8aa567a4-57c6-47a1-9a5f-8c872aae7cca	security_firewall	74ae15a7-523a-4018-a045-acbe75f68cf6	ACCESS_DENIED	\N	\N	800800817	\N	2026-02-09 22:39:10.473258+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "74ae15a7-523a-4018-a045-acbe75f68cf6", "entity_id": "telegram:800800817", "timestamp": "2026-02-09T22:39:10.368Z", "telegram_id": "800800817", "error_message": "Usuario suspendido permanentemente"}
+701b74a5-07cf-401f-ae55-e127dfb1de5e	security_firewall	7d4e2b99-e37e-4787-89b1-5bf39ede49a0	ACCESS_CHECK	\N	\N	800800818	\N	2026-02-09 22:39:12.309314+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "7d4e2b99-e37e-4787-89b1-5bf39ede49a0", "entity_id": "telegram:800800818", "is_banned": false, "timestamp": "2026-02-09T22:39:12.202Z", "is_blocked": true, "telegram_id": "800800818", "user_exists": true, "strike_count": 3}
+57e119fb-542d-486d-9a96-5ccfb2a97076	security_firewall	b9f03843-eee6-4607-ac5a-496c6faa9ea1	ACCESS_CHECK	\N	\N	5391760292	\N	2026-02-09 23:39:35.374196+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "b9f03843-eee6-4607-ac5a-496c6faa9ea1", "entity_id": "telegram:5391760292", "is_banned": false, "timestamp": "2026-02-09T23:39:35.276Z", "is_blocked": false, "telegram_id": "5391760292", "user_exists": true, "strike_count": 1}
+7a530867-42f5-475e-a617-0c23b1e799b4	security_firewall	c5ea7734-7b19-4215-a3cc-4cc467e88b7c	ACCESS_DENIED	\N	\N	800800818	\N	2026-02-09 22:39:12.503136+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800818", "timestamp": "2026-02-09T22:39:12.411Z", "telegram_id": "800800818", "strike_count": 3, "blocked_until": "2026-02-10T00:39:11.169Z", "error_message": "Acceso bloqueado hasta 2026-02-10T00:39:11.169Z"}
+5822f750-796d-4ba0-a220-420f1ff16641	security_firewall	cfcc43e9-51a3-4c30-97ca-f7c96c9d5f6e	ACCESS_CHECK	\N	\N	800800819	\N	2026-02-09 22:39:14.267865+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "cfcc43e9-51a3-4c30-97ca-f7c96c9d5f6e", "entity_id": "telegram:800800819", "is_banned": false, "timestamp": "2026-02-09T22:39:14.157Z", "is_blocked": true, "telegram_id": "800800819", "user_exists": true, "strike_count": 10}
+ad0a79be-962e-4b05-9507-b0f723282c12	security_firewall	7044b8e6-441c-435f-97da-0f6bbd5c58b2	ACCESS_DENIED	\N	\N	800800819	\N	2026-02-09 22:39:14.463035+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800819", "timestamp": "2026-02-09T22:39:14.358Z", "telegram_id": "800800819", "strike_count": 10, "blocked_until": "indefinido", "error_message": "Acceso bloqueado hasta indefinido"}
+4f74448b-72df-4207-b722-d31dedea3fe0	security_firewall	9ea08ba5-1494-476c-8657-3298c168c38e	ACCESS_CHECK	\N	\N	800800820	\N	2026-02-09 22:39:16.287511+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "9ea08ba5-1494-476c-8657-3298c168c38e", "entity_id": "telegram:800800820", "is_banned": false, "timestamp": "2026-02-09T22:39:16.196Z", "is_blocked": true, "telegram_id": "800800820", "user_exists": true, "strike_count": 0}
+2e662fc1-e3ad-43de-a94f-12c6f11ef7da	security_firewall	41dd2366-90f9-4321-81e4-cbf01115caa8	ACCESS_DENIED	\N	\N	800800820	\N	2026-02-09 22:39:16.508168+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800820", "timestamp": "2026-02-09T22:39:16.406Z", "telegram_id": "800800820", "strike_count": 0, "blocked_until": "2026-02-09T22:40:15.162Z", "error_message": "Acceso bloqueado hasta 2026-02-09T22:40:15.162Z"}
+c2732fe0-3e89-4bad-a761-8643dc3800ce	security_firewall	a6bdb7d4-dd57-452b-9c85-e9948721ee78	ACCESS_CHECK	\N	\N	800800821	\N	2026-02-09 22:39:17.732406+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:800800821", "is_banned": false, "timestamp": "2026-02-09T22:39:17.630Z", "is_blocked": true, "telegram_id": "800800821", "user_exists": false, "strike_count": 5}
+3d8d8263-0c1d-42bf-a7fe-030ef063b676	security_firewall	e4b381af-c505-4126-a5da-b126b17b688b	ACCESS_DENIED	\N	\N	800800821	\N	2026-02-09 22:39:17.94484+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800821", "timestamp": "2026-02-09T22:39:17.841Z", "telegram_id": "800800821", "strike_count": 5, "blocked_until": "2026-02-09T23:39:16.602Z", "error_message": "Acceso bloqueado hasta 2026-02-09T23:39:16.602Z"}
+bbab65d8-ee5a-48fc-a571-c3b09f4dcd24	security_firewall	d1ddb303-3ad8-43e0-b0cc-0d42c0265fb0	ACCESS_CHECK	\N	\N	800800822	\N	2026-02-09 22:39:19.773172+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "d1ddb303-3ad8-43e0-b0cc-0d42c0265fb0", "entity_id": "telegram:800800822", "is_banned": false, "timestamp": "2026-02-09T22:39:19.677Z", "is_blocked": false, "telegram_id": "800800822", "user_exists": true, "strike_count": 6}
+9e0f87b4-0601-4f71-bc66-22ef980d6bed	security_firewall	b9e71618-0679-491e-a08f-d138a83f2645	ACCESS_CHECK	\N	\N	800800823	\N	2026-02-09 22:39:21.627668+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "b9e71618-0679-491e-a08f-d138a83f2645", "entity_id": "telegram:800800823", "is_banned": false, "timestamp": "2026-02-09T22:39:21.520Z", "is_blocked": false, "telegram_id": "800800823", "user_exists": true, "strike_count": 5}
+2103727c-db1b-4357-8c1e-1e6bdb545f72	security_firewall	0cf10863-1091-444e-81c0-0196edefc438	ACCESS_CHECK	\N	\N	800800824	\N	2026-02-09 22:39:23.463535+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "0cf10863-1091-444e-81c0-0196edefc438", "entity_id": "telegram:800800824", "is_banned": false, "timestamp": "2026-02-09T22:39:23.365Z", "is_blocked": false, "telegram_id": "800800824", "user_exists": true, "strike_count": 0}
+0b67e1f0-5160-4c67-8843-b601bb4957c5	security_firewall	e00135aa-1535-4c70-ae07-cb12ba25027c	ACCESS_CHECK	\N	\N	9999999999	\N	2026-02-09 22:39:24.179711+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:9999999999", "is_banned": false, "timestamp": "2026-02-09T22:39:24.079Z", "is_blocked": false, "telegram_id": "9999999999", "user_exists": false, "strike_count": 0}
+f940b914-3ae4-4e06-b322-97bd29ec7aa9	security_firewall	4842ad73-0fc8-4498-8e6b-20054af3364f	ACCESS_CHECK	\N	\N	999999993	\N	2026-02-09 22:39:24.887533+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999993", "is_banned": false, "timestamp": "2026-02-09T22:39:24.795Z", "is_blocked": false, "telegram_id": "999999993", "user_exists": false, "strike_count": 0}
+6ae49a2a-653a-4c42-aaad-66e7ca295a8f	security_firewall	84eaea57-e79a-4ff9-be24-0ca2ed2f5a86	ACCESS_CHECK	\N	\N	999999994	\N	2026-02-09 22:39:25.612947+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999994", "is_banned": false, "timestamp": "2026-02-09T22:39:25.513Z", "is_blocked": false, "telegram_id": "999999994", "user_exists": false, "strike_count": 0}
+eca4a34e-afbe-463a-992c-a44110c23e23	security_firewall	fb7ec7bd-eb21-4dde-a7be-a2587d1fa523	ACCESS_CHECK	\N	\N	800800825	\N	2026-02-09 22:39:26.742937+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "fb7ec7bd-eb21-4dde-a7be-a2587d1fa523", "entity_id": "telegram:800800825", "is_banned": false, "timestamp": "2026-02-09T22:39:26.639Z", "is_blocked": false, "telegram_id": "800800825", "user_exists": true, "strike_count": 0}
+94c67f80-5934-4ccc-9893-63e0d19f5273	security_firewall	fb7ec7bd-eb21-4dde-a7be-a2587d1fa523	ACCESS_CHECK	\N	\N	800800825	\N	2026-02-09 22:39:27.353441+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "fb7ec7bd-eb21-4dde-a7be-a2587d1fa523", "entity_id": "telegram:800800825", "is_banned": false, "timestamp": "2026-02-09T22:39:27.254Z", "is_blocked": false, "telegram_id": "800800825", "user_exists": true, "strike_count": 0}
+8570c71b-bb87-48c5-90c6-e6d12f04416c	security_firewall	fb7ec7bd-eb21-4dde-a7be-a2587d1fa523	ACCESS_CHECK	\N	\N	800800825	\N	2026-02-09 22:39:27.971066+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "fb7ec7bd-eb21-4dde-a7be-a2587d1fa523", "entity_id": "telegram:800800825", "is_banned": false, "timestamp": "2026-02-09T22:39:27.868Z", "is_blocked": false, "telegram_id": "800800825", "user_exists": true, "strike_count": 0}
+f6b8c229-cbb5-4ed6-85e5-03a4655e4c12	security_firewall	ae665c73-6ee6-4615-ba2f-8c4d720f3c1c	ACCESS_CHECK	\N	\N	999999995	\N	2026-02-09 22:39:28.647766+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999995", "is_banned": false, "timestamp": "2026-02-09T22:39:28.547Z", "is_blocked": false, "telegram_id": "999999995", "user_exists": false, "strike_count": 0}
+8982b9cd-e3e0-4b3d-b309-815675f5ecab	security_firewall	864eacd5-2076-4877-95eb-348db8c14727	ACCESS_CHECK	\N	\N	999999996	\N	2026-02-09 22:39:29.407335+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999996", "is_banned": false, "timestamp": "2026-02-09T22:39:29.302Z", "is_blocked": false, "telegram_id": "999999996", "user_exists": false, "strike_count": 0}
+cafcd430-a268-46f3-a674-418f8b27222e	security_firewall	938dd03b-549b-4722-9655-71c5cd5c2196	ACCESS_CHECK	\N	\N	800800826	\N	2026-02-09 22:39:31.568435+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "938dd03b-549b-4722-9655-71c5cd5c2196", "entity_id": "telegram:800800826", "is_banned": false, "timestamp": "2026-02-09T22:39:31.453Z", "is_blocked": true, "telegram_id": "800800826", "user_exists": true, "strike_count": 0}
+276f0780-4f7f-4c56-93ed-7ef6d8061250	providers	11111111-1111-1111-1111-111111111111	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 13:34:06.673681+00	\N	{"workflow": "BB_03", "days_range": 5, "target_date": "2026-03-01"}
+b911776f-863d-4cf6-8fbe-de6870891cc6	providers	11111111-1111-1111-1111-111111111111	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 13:40:24.739574+00	\N	{"workflow": "BB_03", "days_range": 5, "target_date": "2026-03-01"}
+bf0925b2-4140-445a-bdd3-b37c3e24042f	security_firewall	9ac903cc-a5c1-4903-9f25-c9caa53a0983	ACCESS_DENIED	\N	\N	800800826	\N	2026-02-09 22:39:31.778158+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800826", "timestamp": "2026-02-09T22:39:31.671Z", "telegram_id": "800800826", "strike_count": 0, "blocked_until": "2026-02-09T23:39:30.420Z", "error_message": "Acceso bloqueado hasta 2026-02-09T23:39:30.420Z"}
+3a375500-f75a-4ac5-bd09-3b7dd5bd984f	security_firewall	3e89661e-b103-4e70-aae4-e994a068819a	ACCESS_CHECK	\N	\N	800800827	\N	2026-02-09 22:39:33.602943+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "3e89661e-b103-4e70-aae4-e994a068819a", "entity_id": "telegram:800800827", "is_banned": true, "timestamp": "2026-02-09T22:39:33.499Z", "is_blocked": true, "telegram_id": "800800827", "user_exists": true, "strike_count": 0}
+52784e47-0a22-4b4d-839e-f71a728e4dd0	security_firewall	b917ab8f-8ed3-4d04-9bb1-4e449a1ef7ae	ACCESS_DENIED	\N	\N	800800827	\N	2026-02-09 22:39:33.822843+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "FIREWALL_BLOCKED", "entity_id": "telegram:800800827", "timestamp": "2026-02-09T22:39:33.708Z", "telegram_id": "800800827", "strike_count": 0, "blocked_until": "2026-02-09T23:39:32.468Z", "error_message": "Acceso bloqueado hasta 2026-02-09T23:39:32.468Z"}
+13962bfd-f665-49b0-bb55-bea05a2f3d40	security_firewall	4d279750-220b-44ec-bd41-4226d18a3623	ACCESS_CHECK	\N	\N	800800828	\N	2026-02-09 22:39:35.042983+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "4d279750-220b-44ec-bd41-4226d18a3623", "entity_id": "telegram:800800828", "is_banned": true, "timestamp": "2026-02-09T22:39:34.935Z", "is_blocked": false, "telegram_id": "800800828", "user_exists": true, "strike_count": 0}
+2a659e00-388e-43a2-8322-4035010a3f71	security_firewall	4d279750-220b-44ec-bd41-4226d18a3623	ACCESS_DENIED	\N	\N	800800828	\N	2026-02-09 22:39:35.249123+00	FIREWALL_ACCESS_DENIED	{"action": "ACCESS_DENIED", "reason": "USER_BANNED", "user_id": "4d279750-220b-44ec-bd41-4226d18a3623", "entity_id": "telegram:800800828", "timestamp": "2026-02-09T22:39:35.146Z", "telegram_id": "800800828", "error_message": "Usuario suspendido permanentemente"}
+37ff7ce8-5a5a-4e2a-bcfd-da29e40d6595	security_firewall	b9f03843-eee6-4607-ac5a-496c6faa9ea1	ACCESS_CHECK	\N	\N	5391760292	\N	2026-02-09 23:30:38.977461+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "b9f03843-eee6-4607-ac5a-496c6faa9ea1", "entity_id": "telegram:5391760292", "is_banned": false, "timestamp": "2026-02-09T23:30:38.863Z", "is_blocked": false, "telegram_id": "5391760292", "user_exists": true, "strike_count": 1}
+5092e413-219b-4a49-af9a-6ef789bf4813	security_firewall	fb1e666a-70be-4c79-9363-948ef3a291cc	ACCESS_CHECK	\N	\N	999999999	\N	2026-02-09 23:30:57.65961+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": null, "entity_id": "telegram:999999999", "is_banned": false, "timestamp": "2026-02-09T23:30:57.553Z", "is_blocked": false, "telegram_id": "999999999", "user_exists": false, "strike_count": 0}
+0b9f5396-5521-4d2c-9826-4fd80d44811f	security_firewall	b9f03843-eee6-4607-ac5a-496c6faa9ea1	ACCESS_CHECK	\N	\N	5391760292	\N	2026-02-09 23:42:15.491809+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "b9f03843-eee6-4607-ac5a-496c6faa9ea1", "entity_id": "telegram:5391760292", "is_banned": false, "timestamp": "2026-02-09T23:42:15.384Z", "is_blocked": false, "telegram_id": "5391760292", "user_exists": true, "strike_count": 1}
+4353b2e9-55eb-424f-a3ef-98afaef0d48b	security_firewall	b9f03843-eee6-4607-ac5a-496c6faa9ea1	ACCESS_CHECK	\N	\N	5391760292	\N	2026-02-09 23:43:52.246607+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "b9f03843-eee6-4607-ac5a-496c6faa9ea1", "entity_id": "telegram:5391760292", "is_banned": false, "timestamp": "2026-02-09T23:43:52.153Z", "is_blocked": false, "telegram_id": "5391760292", "user_exists": true, "strike_count": 1}
+fa491fc0-e95b-42ba-9851-a13d3873afdd	security_firewall	b9f03843-eee6-4607-ac5a-496c6faa9ea1	ACCESS_CHECK	\N	\N	5391760292	\N	2026-02-10 23:04:13.290943+00	FIREWALL_ACCESS_ATTEMPT	{"action": "ACCESS_CHECK", "user_id": "b9f03843-eee6-4607-ac5a-496c6faa9ea1", "entity_id": "telegram:5391760292", "is_banned": false, "timestamp": "2026-02-10T23:04:13.000Z", "is_blocked": false, "telegram_id": "5391760292", "user_exists": true, "strike_count": 1}
+fa5e90f6-5859-4857-afe0-db9889a8bcdd	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:12:15.339478+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
+76c18120-e5d8-4f27-818e-fa1c5497974c	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:12:48.158184+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
+b24b7b23-b257-419e-bdbc-19dd4185d049	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:13:21.587962+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
+2311ffd3-7806-4028-985c-342c55aba3b1	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:13:47.075715+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
+ce60c07c-511a-4af2-8b12-1bba41574ac7	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:14:27.019572+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
+00027b1f-7d28-43ef-80b6-7e0379135440	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:15:42.309606+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
 \.
 
 
@@ -1800,6 +1983,22 @@ e6a86dd7-5146-4347-ba07-723aea2fd513	b9f03843-eee6-4607-ac5a-496c6faa9ea1	2eebc9
 
 
 --
+-- Data for Name: circuit_breaker_state; Type: TABLE DATA; Schema: public; Owner: neondb_owner
+--
+
+COPY public.circuit_breaker_state (id, workflow_name, state, failure_count, last_failure_at, opened_at, next_attempt_at, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: error_metrics; Type: TABLE DATA; Schema: public; Owner: neondb_owner
+--
+
+COPY public.error_metrics (id, metric_date, workflow_name, severity, error_count, first_occurrence, last_occurrence, created_at, updated_at) FROM stdin;
+\.
+
+
+--
 -- Data for Name: notification_configs; Type: TABLE DATA; Schema: public; Owner: neondb_owner
 --
 
@@ -1812,7 +2011,7 @@ COPY public.notification_configs (id, reminder_1_hours, reminder_2_hours, is_act
 -- Data for Name: notification_queue; Type: TABLE DATA; Schema: public; Owner: neondb_owner
 --
 
-COPY public.notification_queue (id, booking_id, user_id, message, priority, status, retry_count, error_message, created_at, updated_at, sent_at) FROM stdin;
+COPY public.notification_queue (id, booking_id, user_id, message, priority, status, retry_count, error_message, created_at, updated_at, sent_at, next_retry_at, channel, recipient, payload, max_retries, expires_at) FROM stdin;
 \.
 
 
@@ -1820,13 +2019,18 @@ COPY public.notification_queue (id, booking_id, user_id, message, priority, stat
 -- Data for Name: providers; Type: TABLE DATA; Schema: public; Owner: neondb_owner
 --
 
-COPY public.providers (id, user_id, name, email, google_calendar_id, slot_duration_minutes, min_notice_hours, public_booking_enabled, created_at, deleted_at, slug) FROM stdin;
-2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	\N	Dr. Roger Auto	dev.n8n.stax@gmail.com	dev.n8n.stax@gmail.com	30	2	t	2026-01-15 14:52:06.081827+00	\N	dr-roger-auto
-98d6e8db-0e93-4c62-a762-0ee0dd2aff29	\N	Dr. John Smith	john.smith@example.com	\N	30	2	t	2026-01-26 00:14:22.426419+00	\N	dr-smith
-c5d0025d-b97c-4879-9692-73a92632bb79	\N	Dra. María García	maria.garcia@example.com	\N	30	2	t	2026-01-26 00:14:22.426419+00	\N	dr-garcia
-73f97ddc-306c-42d4-bd08-46dc3ee96217	6daa9018-1df4-4dc3-a761-100e1ae11a09	Dr. Juan Pérez	juan.perez@test.com	juan.perez@gmail.com	30	2	t	2026-01-26 21:27:45.344063+00	\N	dr-juan-perez
-11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	6daa9018-1df4-4dc3-a761-100e1ae11a09	Test Provider	test@test.com	test@gmail.com	30	1	t	2026-01-26 21:27:45.344063+00	\N	test-provider
-ae1d057b-ec08-45ee-9303-606a712cd9bd	6daa9018-1df4-4dc3-a761-100e1ae11a09	Deleted Provider	deleted@test.com	deleted@gmail.com	30	2	f	2026-01-26 21:27:45.344063+00	2026-01-26 21:27:45.344063+00	deleted-provider
+COPY public.providers (id, user_id, name, email, google_calendar_id, slot_duration_minutes, min_notice_hours, public_booking_enabled, created_at, deleted_at, slug, slot_duration_mins) FROM stdin;
+2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	\N	Dr. Roger Auto	dev.n8n.stax@gmail.com	dev.n8n.stax@gmail.com	30	2	t	2026-01-15 14:52:06.081827+00	\N	dr-roger-auto	30
+98d6e8db-0e93-4c62-a762-0ee0dd2aff29	\N	Dr. John Smith	john.smith@example.com	\N	30	2	t	2026-01-26 00:14:22.426419+00	\N	dr-smith	30
+c5d0025d-b97c-4879-9692-73a92632bb79	\N	Dra. María García	maria.garcia@example.com	\N	30	2	t	2026-01-26 00:14:22.426419+00	\N	dr-garcia	30
+73f97ddc-306c-42d4-bd08-46dc3ee96217	6daa9018-1df4-4dc3-a761-100e1ae11a09	Dr. Juan Pérez	juan.perez@test.com	juan.perez@gmail.com	30	2	t	2026-01-26 21:27:45.344063+00	\N	dr-juan-perez	30
+11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	6daa9018-1df4-4dc3-a761-100e1ae11a09	Test Provider	test@test.com	test@gmail.com	30	1	t	2026-01-26 21:27:45.344063+00	\N	test-provider	30
+ae1d057b-ec08-45ee-9303-606a712cd9bd	6daa9018-1df4-4dc3-a761-100e1ae11a09	Deleted Provider	deleted@test.com	deleted@gmail.com	30	2	f	2026-01-26 21:27:45.344063+00	2026-01-26 21:27:45.344063+00	deleted-provider	30
+a1b2c3d4-e5f6-7890-abcd-ef1234567890	\N	Dr. Test Provider	\N	\N	30	2	t	2026-02-10 13:17:44.098341+00	\N	dr-test-provider	30
+b2c3d4e5-f6a7-8901-bcde-f12345678901	\N	Dra. Test Long Slots	\N	\N	30	2	t	2026-02-10 13:17:44.488328+00	\N	dra-test-long	60
+c3d4e5f6-a7b8-9012-cdef-123456789012	\N	Dr. No Schedule	\N	\N	30	2	t	2026-02-10 13:17:44.637806+00	\N	dr-no-schedule	30
+d4e5f6a7-b8c9-0123-defa-234567890123	\N	Dr. Deleted	\N	\N	30	2	t	2026-02-10 13:17:44.783511+00	2026-02-10 13:17:44.783511+00	dr-deleted	30
+e5f6a7b8-c9d0-1234-efab-345678901234	\N	Dr. Quick Appointments	\N	\N	30	2	t	2026-02-10 13:17:44.933549+00	\N	dr-quick	15
 \.
 
 
@@ -1870,6 +2074,17 @@ d4245111-6177-42ef-8961-c255b02c41a1	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	Monday
 bbf5e47e-18cd-4d45-a53a-7c79ec69d312	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	Friday	00:00:00	23:59:59	t
 545657b3-ffcd-435a-9a8c-9e8f3a2776c8	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	Saturday	00:00:00	23:59:59	t
 60c70352-1ca7-42a9-94a9-72ac88d0bcc2	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	Sunday	00:00:00	23:59:59	t
+74b3309d-9e42-4407-9fee-5161f65f2e7c	a1b2c3d4-e5f6-7890-abcd-ef1234567890	Monday	09:00:00	17:00:00	t
+1e5ac391-3ed1-42cd-a737-db63308358c1	a1b2c3d4-e5f6-7890-abcd-ef1234567890	Tuesday	09:00:00	17:00:00	t
+ccb35933-3fd3-4701-b76e-78b6b96d7b5f	a1b2c3d4-e5f6-7890-abcd-ef1234567890	Wednesday	09:00:00	17:00:00	t
+57dbb0e3-bf03-4e2f-99cd-fe734f6276f3	a1b2c3d4-e5f6-7890-abcd-ef1234567890	Thursday	09:00:00	17:00:00	t
+a0639546-af41-45d2-902e-700ab7ced5ff	a1b2c3d4-e5f6-7890-abcd-ef1234567890	Friday	09:00:00	17:00:00	t
+22ae17cc-41e8-41c1-93f5-087e3a7b87a3	a1b2c3d4-e5f6-7890-abcd-ef1234567890	Saturday	09:00:00	13:00:00	f
+b14dde8f-a9fb-4e07-995a-ef8f4a4ce751	b2c3d4e5-f6a7-8901-bcde-f12345678901	Monday	10:00:00	18:00:00	t
+ae410f0d-dd5a-4892-9d73-9d42bc04fcb9	b2c3d4e5-f6a7-8901-bcde-f12345678901	Wednesday	10:00:00	18:00:00	t
+8743a8ea-be8c-43c9-8f96-fa0bbeef9eab	b2c3d4e5-f6a7-8901-bcde-f12345678901	Friday	10:00:00	18:00:00	t
+e27329be-f1f4-43c5-afd1-d103c9884103	e5f6a7b8-c9d0-1234-efab-345678901234	Tuesday	08:00:00	12:00:00	t
+22b95497-d804-4f9a-a845-020cf70ec471	e5f6a7b8-c9d0-1234-efab-345678901234	Thursday	08:00:00	12:00:00	t
 \.
 
 
@@ -1915,88 +2130,105 @@ ce18af9c-fff7-4043-b8fd-dbb7ad66a4cf	73f97ddc-306c-42d4-bd08-46dc3ee96217	Urgenc
 -- Data for Name: system_errors; Type: TABLE DATA; Schema: public; Owner: neondb_owner
 --
 
-COPY public.system_errors (error_id, workflow_name, workflow_execution_id, error_type, severity, error_message, error_stack, error_context, user_id, created_at) FROM stdin;
-3b4f6cb6-7b00-4b81-85f1-39e48b3f9b31	Manual_Test	\N	\N	\N	Checking Insert	\N	\N	\N	2026-01-15 19:44:04.618267+00
-465569c5-656b-46aa-b90a-87e8dc160513	ROGER_ALERTS	314	INFO	LOW	Watchtower Online	\N	{}	\N	2026-01-15 21:46:56.152295+00
-1c670e1d-a2e7-465f-8ab4-7aa261cd0122	ROGER_ALERTS	315	INFO	LOW	Watchtower Online	\N	{}	\N	2026-01-15 22:00:24.335139+00
-c6a4130b-1183-4a7a-bc81-393000f4da34	HTML_FIX_TEST	317	INFO	LOW	Testing HTML Parse Mode	\N	{}	\N	2026-01-15 22:05:46.433014+00
-072982a9-f8c2-460a-bf91-903157ade284	StressTest	322	UNKNOWN	ERROR	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	\N	{}	\N	2026-01-15 22:08:25.493265+00
-59f1d1a5-1d1e-4ac2-bc3a-e3622dae7d99	DeepTest	323	UNKNOWN	ERROR	Nested	\N	{"level1": {"level2": {"level3": "value"}}}	\N	2026-01-15 22:08:32.562809+00
-65ca488f-e29f-4f69-9018-134ec54e000f	EnumTest	325	UNKNOWN	LOW	foo	\N	{}	\N	2026-01-15 22:08:46.662653+00
-7f17dd4c-7215-49c5-85d8-023073c90960	BoundaryTest	326	UNKNOWN	ERROR	test	\N	{}	\N	2026-01-15 22:10:37.464039+00
-5925c92d-5191-4eb3-8dca-5e040586958e	BoundaryTest	327	UNKNOWN	ERROR	test	\N	{}	\N	2026-01-15 22:10:45.038655+00
-cc63bdd3-a373-4ef8-b30c-64c2b0e59439	BoundaryTest	328	UNKNOWN	NUCLEAR	test	\N	{}	\N	2026-01-15 22:10:52.619162+00
-7e873fcb-b7cb-4192-93db-4baf940cc119	BoundaryTest	329	UNKNOWN	ERROR	test	\N	{}	\N	2026-01-15 22:11:00.11801+00
-2f59da40-8fd4-4573-b9dc-5466697daf69	STRIKE_TEST	333	VALIDATION	ERROR	Invalid RUT detected	\N	{}	\N	2026-01-15 22:29:37.067407+00
-4011060c-bc79-4241-bc8a-a13f700ce5c3	FIREWALL_TEST	339	VALIDATION	MEDIUM	Simulated RUT Failure #1	\N	{}	\N	2026-01-16 13:59:49.547928+00
-a1e81f0e-dff6-4b39-8404-6f58f711e811	FIREWALL_TEST	340	VALIDATION	MEDIUM	Simulated RUT Failure #2	\N	{}	\N	2026-01-16 13:59:58.612759+00
-09c61a4e-7996-4326-8d52-3959e695557d	FIREWALL_TEST	341	VALIDATION	MEDIUM	Simulated RUT Failure #3	\N	{}	\N	2026-01-16 14:00:07.002452+00
-669526e6-e092-49f9-9e59-cf80410a18df	DEBUG_STRIKE	343	VALIDATION	ERROR	Manual Test	\N	{}	\N	2026-01-16 14:00:57.33626+00
-d0d3a942-54a5-4f7a-9a22-a8e27fdb5a38	FIREWALL_TEST	344	VALIDATION	MEDIUM	Simulated RUT Failure #1	\N	{}	\N	2026-01-16 14:11:47.742607+00
-1a301a0a-0254-48e8-9dc7-4dc32ea30ace	FIREWALL_TEST	345	VALIDATION	MEDIUM	Simulated RUT Failure #2	\N	{}	\N	2026-01-16 14:11:56.282393+00
-99138bac-a186-47d0-b889-7b83f3b92c84	FIREWALL_TEST	346	VALIDATION	MEDIUM	Simulated RUT Failure #3	\N	{}	\N	2026-01-16 14:12:04.477978+00
-eb90d3e4-3fa9-48c0-bcd9-8be7ab96bdfd	DIAGNOSTIC_STRIKE	347	VALIDATION	ERROR	Checking strike_applied field	\N	{}	\N	2026-01-16 14:13:53.082593+00
-c311a867-be60-464a-a88d-9a1b05e103fa	FIREWALL_TEST	348	VALIDATION	MEDIUM	Simulated RUT Failure #1	\N	{}	\N	2026-01-16 14:17:47.888894+00
-a004ef4d-e4c8-4a34-89eb-9ee29e94d774	FIREWALL_TEST	349	VALIDATION	MEDIUM	Simulated RUT Failure #2	\N	{}	\N	2026-01-16 14:17:56.003222+00
-d814e01c-fa8d-49ba-82f4-08e0055638de	FIREWALL_TEST	350	VALIDATION	MEDIUM	Simulated RUT Failure #3	\N	{}	\N	2026-01-16 14:18:03.874123+00
-e8f85b75-32b0-4dbc-8fa9-e4a3d476c323	CERT_FLOW	352	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 14:32:33.272062+00
-7273f3ed-727e-4fa9-995a-c2686554ae6b	CERT_FLOW	353	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 14:32:48.918813+00
-ac36992f-a3f3-48c2-96bc-19edabc2fa84	DEBUG_CERT	354	UNKNOWN	ERROR	Check Strike	\N	{}	\N	2026-01-16 14:33:59.203798+00
-b332fd2e-8931-42fa-a6e1-15843ab2eff3	CERT_FLOW	356	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 14:39:03.099662+00
-d472ce76-c790-4972-847a-304c28368244	CERT_FLOW	357	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 14:39:12.156821+00
-5f8d6905-fa98-40f0-83cc-e1708d0534fc	CERT_FLOW	358	UNKNOWN	ERROR	Strike Manual	\N	{}	\N	2026-01-16 14:41:19.109614+00
-299ec4f9-f8c1-4d05-83ca-48fdfe6651e9	CERT_FLOW	360	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 14:58:59.052864+00
-e2e36459-9e40-4be7-9e41-32354cfcd4e9	CERT_FLOW	361	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 14:59:14.111527+00
-c46b7066-0149-4e10-8834-fa0163a3eaa8	CERT_FLOW	364	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 15:16:13.976621+00
-73aab834-21de-47fe-b5d3-eb2efc66dc24	CERT_FLOW	365	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 15:16:28.777831+00
-92ca1690-dfb7-437c-9eac-27c72a4fa85c	CERT_FLOW	367	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 15:32:34.290094+00
-efee3415-e81e-4e95-a90b-d27960f0a997	CERT_FLOW	368	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 15:32:49.034662+00
-bccf2f9e-5286-4a93-8c96-de79262219d8	CERT_FLOW	370	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 15:35:50.190031+00
-f15d8a18-66d1-4deb-abe8-c69c678b5309	CERT_FLOW	371	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 15:36:05.116877+00
-d990ef5c-2ecc-41ab-8beb-0e11d059916d	DEBUG_V8	372	UNKNOWN	ERROR	Check Response	\N	{}	\N	2026-01-16 15:37:56.688346+00
-de2dbfde-a950-4b09-8885-176e8c4d8c1a	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:02:52.340504+00
-dc3438f6-28af-4b00-b2a0-b496f445b656	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:03:00.058446+00
-e61b1f5d-8798-4082-929f-61f46c7f8b65	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:23:04.248383+00
-a4121f39-e857-4e94-bfa9-034c5f68a858	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:23:12.363028+00
-6bd9375a-bf58-4f38-afd1-f1c3f4355291	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:33:55.692907+00
-08d0ff84-2026-4cb1-9dd6-11a7665cbeb0	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:34:09.241114+00
-52722f5e-a4f2-41c6-a9a6-eaa08f0c047c	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:59:17.891899+00
-4131d866-edcb-46a8-b103-df342d9866cf	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:59:26.14224+00
-640febc1-a933-453f-b884-b4d0e222bf13	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:26:14.942147+00
-a0303b94-a02d-4e09-9241-9f247f61154e	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:26:29.972011+00
-255b930c-ca9d-45e7-acd3-54c82fbb0d83	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:28:42.092963+00
-7390a5b2-a50d-4ebb-9d4a-1c03a9f035cf	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:28:55.986015+00
-f367a541-b540-46b9-919c-60410e6c3544	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:30:04.106966+00
-25d1a622-1443-4485-966f-ff7569f81d7c	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:30:18.146243+00
-f198e421-7e86-43a0-ad6b-7254ca21f7da	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:31:20.782513+00
-63789bf0-a783-4306-b313-0cf0194a5cf0	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:31:35.003225+00
-8080e1ad-672b-47e9-96d5-55eac93e22d5	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:40:44.002505+00
-2f7dbb1b-9a5d-4edd-b89f-a65a74ddc9c2	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:40:57.517798+00
-4caed030-5ed3-45e5-9e7a-c32f439cf987	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 19:13:54.028451+00
-5a6427ce-e8a7-4407-9a53-6166acb418b7	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 19:14:01.93815+00
-7da2d390-1686-41ee-8372-d5c0077043e9	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 19:18:57.067741+00
-d49e5d86-528a-4d6b-947a-5617859bfa4c	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 19:19:06.130382+00
-ffcff5e6-2b5b-4296-a2f2-9f778e07f371	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 19:44:16.166083+00
-09fb7b0d-9ac2-4d4d-8b0c-c8b5d0f68afa	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 19:44:30.092257+00
-523f4315-fca0-48dc-997f-1145b80b457c	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 20:12:58.803682+00
-4efd09ef-7261-4f60-98d6-d277abbc9e88	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 20:13:12.412227+00
-5ec33a5a-a8f7-4c9b-95b0-00cccb97b4e6	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 20:17:38.301461+00
-fd382c0d-1b3e-4658-9fae-642422577287	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 20:17:46.4877+00
-37365c15-839e-4f8c-b37a-99b5a9441367	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 20:42:30.231697+00
-e8a9cea1-42ef-423d-afc6-5e388dc5ea40	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 20:42:44.513742+00
-a393be9d-9f8c-4b9b-a03a-bf76522b6c62	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 21:20:04.641039+00
-a67b95f5-c411-46ac-9960-89008d1a1dc8	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 21:20:18.634771+00
-e7611576-1ca8-44db-9e44-95299ad56210	Test Workflow	\N	UNKNOWN	ERROR	Test Error Message	\N	{}	\N	2026-01-16 22:00:15.374054+00
-8916766d-8d1a-433f-9848-59d61dad9536	Test Workflow	\N	INFO	WARNING	Test Error Message	\N	{}	\N	2026-01-16 22:00:16.69291+00
-b501fc07-33f0-49b1-9747-254554c06242	TEST_WORKFLOW	\N	INFO	WARNING	Prueba de notificación de Telegram	\N	{}	\N	2026-01-16 22:06:43.752284+00
-718be978-d50c-42a1-8490-740a8dba6b50	AVAILABILITY_V4_DEBUG	\N	\N	CRITICAL	Workflow crashed at DB level	\N	\N	\N	2026-01-16 22:26:07.284784+00
-8f24add1-add2-436c-bcc4-6e78c274f6fa	AVAILABILITY_V5_DEBUG	\N	\N	CRITICAL	Still crashing after reference fix	\N	\N	\N	2026-01-16 22:29:27.457134+00
-f477a18e-855f-4c1d-b777-3aeadec60344	BB***ct	1687	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-26 23:29:10.437242+00
-4de47907-6fea-4fb4-850e-3fce0abc48c8	BB***ct	1689	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-26 23:54:38.2941+00
-afa29a1a-0271-4f4f-bc88-a0df397204fc	BB***ct	1691	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-27 00:11:56.984268+00
-7b2bd72a-9280-4470-82b0-1bb23f17a91c	Ex***ow	231	\N	\N	UNKNOWN ERROR	[]	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 17:32:06.555288+00
-c26c65a5-0ee7-4a36-9593-5375b47ba5dd	Ex***ow	231	\N	\N	Example Error Message	"Stacktrace"	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 18:11:04.948155+00
-f0e2110c-4ebf-443a-b2a4-38e973b43b79	Ex***ow	231	\N	\N	Example Error Message	"Stacktrace"	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 19:55:42.003929+00
+COPY public.system_errors (error_id, workflow_name, workflow_execution_id, error_type, severity, error_message, error_stack, error_context, user_id, created_at, resolved_at, is_resolved, resolution_notes) FROM stdin;
+3b4f6cb6-7b00-4b81-85f1-39e48b3f9b31	Manual_Test	\N	\N	\N	Checking Insert	\N	\N	\N	2026-01-15 19:44:04.618267+00	\N	f	\N
+465569c5-656b-46aa-b90a-87e8dc160513	ROGER_ALERTS	314	INFO	LOW	Watchtower Online	\N	{}	\N	2026-01-15 21:46:56.152295+00	\N	f	\N
+1c670e1d-a2e7-465f-8ab4-7aa261cd0122	ROGER_ALERTS	315	INFO	LOW	Watchtower Online	\N	{}	\N	2026-01-15 22:00:24.335139+00	\N	f	\N
+c6a4130b-1183-4a7a-bc81-393000f4da34	HTML_FIX_TEST	317	INFO	LOW	Testing HTML Parse Mode	\N	{}	\N	2026-01-15 22:05:46.433014+00	\N	f	\N
+072982a9-f8c2-460a-bf91-903157ade284	StressTest	322	UNKNOWN	ERROR	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	\N	{}	\N	2026-01-15 22:08:25.493265+00	\N	f	\N
+59f1d1a5-1d1e-4ac2-bc3a-e3622dae7d99	DeepTest	323	UNKNOWN	ERROR	Nested	\N	{"level1": {"level2": {"level3": "value"}}}	\N	2026-01-15 22:08:32.562809+00	\N	f	\N
+65ca488f-e29f-4f69-9018-134ec54e000f	EnumTest	325	UNKNOWN	LOW	foo	\N	{}	\N	2026-01-15 22:08:46.662653+00	\N	f	\N
+7f17dd4c-7215-49c5-85d8-023073c90960	BoundaryTest	326	UNKNOWN	ERROR	test	\N	{}	\N	2026-01-15 22:10:37.464039+00	\N	f	\N
+5925c92d-5191-4eb3-8dca-5e040586958e	BoundaryTest	327	UNKNOWN	ERROR	test	\N	{}	\N	2026-01-15 22:10:45.038655+00	\N	f	\N
+cc63bdd3-a373-4ef8-b30c-64c2b0e59439	BoundaryTest	328	UNKNOWN	NUCLEAR	test	\N	{}	\N	2026-01-15 22:10:52.619162+00	\N	f	\N
+7e873fcb-b7cb-4192-93db-4baf940cc119	BoundaryTest	329	UNKNOWN	ERROR	test	\N	{}	\N	2026-01-15 22:11:00.11801+00	\N	f	\N
+2f59da40-8fd4-4573-b9dc-5466697daf69	STRIKE_TEST	333	VALIDATION	ERROR	Invalid RUT detected	\N	{}	\N	2026-01-15 22:29:37.067407+00	\N	f	\N
+4011060c-bc79-4241-bc8a-a13f700ce5c3	FIREWALL_TEST	339	VALIDATION	MEDIUM	Simulated RUT Failure #1	\N	{}	\N	2026-01-16 13:59:49.547928+00	\N	f	\N
+a1e81f0e-dff6-4b39-8404-6f58f711e811	FIREWALL_TEST	340	VALIDATION	MEDIUM	Simulated RUT Failure #2	\N	{}	\N	2026-01-16 13:59:58.612759+00	\N	f	\N
+09c61a4e-7996-4326-8d52-3959e695557d	FIREWALL_TEST	341	VALIDATION	MEDIUM	Simulated RUT Failure #3	\N	{}	\N	2026-01-16 14:00:07.002452+00	\N	f	\N
+669526e6-e092-49f9-9e59-cf80410a18df	DEBUG_STRIKE	343	VALIDATION	ERROR	Manual Test	\N	{}	\N	2026-01-16 14:00:57.33626+00	\N	f	\N
+d0d3a942-54a5-4f7a-9a22-a8e27fdb5a38	FIREWALL_TEST	344	VALIDATION	MEDIUM	Simulated RUT Failure #1	\N	{}	\N	2026-01-16 14:11:47.742607+00	\N	f	\N
+1a301a0a-0254-48e8-9dc7-4dc32ea30ace	FIREWALL_TEST	345	VALIDATION	MEDIUM	Simulated RUT Failure #2	\N	{}	\N	2026-01-16 14:11:56.282393+00	\N	f	\N
+99138bac-a186-47d0-b889-7b83f3b92c84	FIREWALL_TEST	346	VALIDATION	MEDIUM	Simulated RUT Failure #3	\N	{}	\N	2026-01-16 14:12:04.477978+00	\N	f	\N
+eb90d3e4-3fa9-48c0-bcd9-8be7ab96bdfd	DIAGNOSTIC_STRIKE	347	VALIDATION	ERROR	Checking strike_applied field	\N	{}	\N	2026-01-16 14:13:53.082593+00	\N	f	\N
+c311a867-be60-464a-a88d-9a1b05e103fa	FIREWALL_TEST	348	VALIDATION	MEDIUM	Simulated RUT Failure #1	\N	{}	\N	2026-01-16 14:17:47.888894+00	\N	f	\N
+a004ef4d-e4c8-4a34-89eb-9ee29e94d774	FIREWALL_TEST	349	VALIDATION	MEDIUM	Simulated RUT Failure #2	\N	{}	\N	2026-01-16 14:17:56.003222+00	\N	f	\N
+d814e01c-fa8d-49ba-82f4-08e0055638de	FIREWALL_TEST	350	VALIDATION	MEDIUM	Simulated RUT Failure #3	\N	{}	\N	2026-01-16 14:18:03.874123+00	\N	f	\N
+e8f85b75-32b0-4dbc-8fa9-e4a3d476c323	CERT_FLOW	352	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 14:32:33.272062+00	\N	f	\N
+7273f3ed-727e-4fa9-995a-c2686554ae6b	CERT_FLOW	353	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 14:32:48.918813+00	\N	f	\N
+ac36992f-a3f3-48c2-96bc-19edabc2fa84	DEBUG_CERT	354	UNKNOWN	ERROR	Check Strike	\N	{}	\N	2026-01-16 14:33:59.203798+00	\N	f	\N
+b332fd2e-8931-42fa-a6e1-15843ab2eff3	CERT_FLOW	356	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 14:39:03.099662+00	\N	f	\N
+d472ce76-c790-4972-847a-304c28368244	CERT_FLOW	357	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 14:39:12.156821+00	\N	f	\N
+5f8d6905-fa98-40f0-83cc-e1708d0534fc	CERT_FLOW	358	UNKNOWN	ERROR	Strike Manual	\N	{}	\N	2026-01-16 14:41:19.109614+00	\N	f	\N
+299ec4f9-f8c1-4d05-83ca-48fdfe6651e9	CERT_FLOW	360	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 14:58:59.052864+00	\N	f	\N
+e2e36459-9e40-4be7-9e41-32354cfcd4e9	CERT_FLOW	361	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 14:59:14.111527+00	\N	f	\N
+c46b7066-0149-4e10-8834-fa0163a3eaa8	CERT_FLOW	364	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 15:16:13.976621+00	\N	f	\N
+73aab834-21de-47fe-b5d3-eb2efc66dc24	CERT_FLOW	365	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 15:16:28.777831+00	\N	f	\N
+92ca1690-dfb7-437c-9eac-27c72a4fa85c	CERT_FLOW	367	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 15:32:34.290094+00	\N	f	\N
+efee3415-e81e-4e95-a90b-d27960f0a997	CERT_FLOW	368	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 15:32:49.034662+00	\N	f	\N
+bccf2f9e-5286-4a93-8c96-de79262219d8	CERT_FLOW	370	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 15:35:50.190031+00	\N	f	\N
+f15d8a18-66d1-4deb-abe8-c69c678b5309	CERT_FLOW	371	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 15:36:05.116877+00	\N	f	\N
+d990ef5c-2ecc-41ab-8beb-0e11d059916d	DEBUG_V8	372	UNKNOWN	ERROR	Check Response	\N	{}	\N	2026-01-16 15:37:56.688346+00	\N	f	\N
+de2dbfde-a950-4b09-8885-176e8c4d8c1a	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:02:52.340504+00	\N	f	\N
+dc3438f6-28af-4b00-b2a0-b496f445b656	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:03:00.058446+00	\N	f	\N
+e61b1f5d-8798-4082-929f-61f46c7f8b65	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:23:04.248383+00	\N	f	\N
+a4121f39-e857-4e94-bfa9-034c5f68a858	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:23:12.363028+00	\N	f	\N
+6bd9375a-bf58-4f38-afd1-f1c3f4355291	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:33:55.692907+00	\N	f	\N
+08d0ff84-2026-4cb1-9dd6-11a7665cbeb0	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:34:09.241114+00	\N	f	\N
+52722f5e-a4f2-41c6-a9a6-eaa08f0c047c	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 17:59:17.891899+00	\N	f	\N
+4131d866-edcb-46a8-b103-df342d9866cf	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 17:59:26.14224+00	\N	f	\N
+640febc1-a933-453f-b884-b4d0e222bf13	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:26:14.942147+00	\N	f	\N
+a0303b94-a02d-4e09-9241-9f247f61154e	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:26:29.972011+00	\N	f	\N
+255b930c-ca9d-45e7-acd3-54c82fbb0d83	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:28:42.092963+00	\N	f	\N
+7390a5b2-a50d-4ebb-9d4a-1c03a9f035cf	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:28:55.986015+00	\N	f	\N
+f367a541-b540-46b9-919c-60410e6c3544	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:30:04.106966+00	\N	f	\N
+25d1a622-1443-4485-966f-ff7569f81d7c	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:30:18.146243+00	\N	f	\N
+f198e421-7e86-43a0-ad6b-7254ca21f7da	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:31:20.782513+00	\N	f	\N
+63789bf0-a783-4306-b313-0cf0194a5cf0	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:31:35.003225+00	\N	f	\N
+8080e1ad-672b-47e9-96d5-55eac93e22d5	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 18:40:44.002505+00	\N	f	\N
+2f7dbb1b-9a5d-4edd-b89f-a65a74ddc9c2	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 18:40:57.517798+00	\N	f	\N
+4caed030-5ed3-45e5-9e7a-c32f439cf987	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 19:13:54.028451+00	\N	f	\N
+5a6427ce-e8a7-4407-9a53-6166acb418b7	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 19:14:01.93815+00	\N	f	\N
+7da2d390-1686-41ee-8372-d5c0077043e9	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 19:18:57.067741+00	\N	f	\N
+d49e5d86-528a-4d6b-947a-5617859bfa4c	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 19:19:06.130382+00	\N	f	\N
+ffcff5e6-2b5b-4296-a2f2-9f778e07f371	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 19:44:16.166083+00	\N	f	\N
+09fb7b0d-9ac2-4d4d-8b0c-c8b5d0f68afa	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 19:44:30.092257+00	\N	f	\N
+523f4315-fca0-48dc-997f-1145b80b457c	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 20:12:58.803682+00	\N	f	\N
+4efd09ef-7261-4f60-98d6-d277abbc9e88	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 20:13:12.412227+00	\N	f	\N
+5ec33a5a-a8f7-4c9b-95b0-00cccb97b4e6	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 20:17:38.301461+00	\N	f	\N
+fd382c0d-1b3e-4658-9fae-642422577287	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 20:17:46.4877+00	\N	f	\N
+37365c15-839e-4f8c-b37a-99b5a9441367	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 20:42:30.231697+00	\N	f	\N
+e8a9cea1-42ef-423d-afc6-5e388dc5ea40	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 20:42:44.513742+00	\N	f	\N
+a393be9d-9f8c-4b9b-a03a-bf76522b6c62	CERT_FLOW	\N	INFO	ERROR	Testing DB	\N	{}	\N	2026-01-16 21:20:04.641039+00	\N	f	\N
+a67b95f5-c411-46ac-9960-89008d1a1dc8	CERT_FLOW	\N	UNKNOWN	ERROR	Strike 1	\N	{}	\N	2026-01-16 21:20:18.634771+00	\N	f	\N
+e7611576-1ca8-44db-9e44-95299ad56210	Test Workflow	\N	UNKNOWN	ERROR	Test Error Message	\N	{}	\N	2026-01-16 22:00:15.374054+00	\N	f	\N
+8916766d-8d1a-433f-9848-59d61dad9536	Test Workflow	\N	INFO	WARNING	Test Error Message	\N	{}	\N	2026-01-16 22:00:16.69291+00	\N	f	\N
+b501fc07-33f0-49b1-9747-254554c06242	TEST_WORKFLOW	\N	INFO	WARNING	Prueba de notificación de Telegram	\N	{}	\N	2026-01-16 22:06:43.752284+00	\N	f	\N
+718be978-d50c-42a1-8490-740a8dba6b50	AVAILABILITY_V4_DEBUG	\N	\N	CRITICAL	Workflow crashed at DB level	\N	\N	\N	2026-01-16 22:26:07.284784+00	\N	f	\N
+8f24add1-add2-436c-bcc4-6e78c274f6fa	AVAILABILITY_V5_DEBUG	\N	\N	CRITICAL	Still crashing after reference fix	\N	\N	\N	2026-01-16 22:29:27.457134+00	\N	f	\N
+f477a18e-855f-4c1d-b777-3aeadec60344	BB***ct	1687	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-26 23:29:10.437242+00	\N	f	\N
+4de47907-6fea-4fb4-850e-3fce0abc48c8	BB***ct	1689	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-26 23:54:38.2941+00	\N	f	\N
+afa29a1a-0271-4f4f-bc88-a0df397204fc	BB***ct	1691	\N	\N	\N	\N	{"node": "Log: Success", "workflowId": "77HAhYO_vFqeo6iFLWJx5"}	\N	2026-01-27 00:11:56.984268+00	\N	f	\N
+7b2bd72a-9280-4470-82b0-1bb23f17a91c	Ex***ow	231	\N	\N	UNKNOWN ERROR	[]	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 17:32:06.555288+00	\N	f	\N
+c26c65a5-0ee7-4a36-9593-5375b47ba5dd	Ex***ow	231	\N	\N	Example Error Message	"Stacktrace"	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 18:11:04.948155+00	\N	f	\N
+f0e2110c-4ebf-443a-b2a4-38e973b43b79	Ex***ow	231	\N	\N	Example Error Message	"Stacktrace"	{"node": "Node With Error", "workflowId": "1"}	\N	2026-01-30 19:55:42.003929+00	\N	f	\N
+076d4596-b7b8-4f88-ab56-ddce7422b6af	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-10 23:02:18.457124+00	\N	f	\N
+4993b023-f97d-49a5-b535-9a344cd76226	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-10 23:04:09.386203+00	\N	f	\N
+524aa586-5b84-4a6a-b15c-6acc1f2ab1d7	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-10 23:13:02.476749+00	\N	f	\N
+3539d54c-182b-40ff-a6ac-d5228ebc9f10	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 00:34:53.920024+00	\N	f	\N
+f9687972-7df5-4bdb-b8fe-e46b358bc435	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 03:44:17.552058+00	\N	f	\N
+6e4b555f-fe6f-4897-91fc-57acd351c31c	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 13:25:05.078139+00	\N	f	\N
+b74ada8f-7f39-4713-b064-0627d5ac59e2	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 13:28:42.023313+00	\N	f	\N
+fc659999-9d35-414d-b03a-314c1db88b0c	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 13:29:22.988611+00	\N	f	\N
+46c236ca-750d-44fc-bb7f-0b1f2e6b93b1	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 13:29:52.15849+00	\N	f	\N
+28271567-289d-49ed-98e9-95f79fd717c0	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 13:31:24.286587+00	\N	f	\N
+71393b0e-93f1-4121-9587-cd1548dad77e	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 13:34:09.553142+00	\N	f	\N
+640cc931-40ac-4da8-b91a-4bb50920b422	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 13:40:26.64416+00	\N	f	\N
+22d1b259-783b-48a0-920f-1e0d93a4c16b	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:10:58.148643+00	\N	f	\N
+43a61091-2b74-4bea-8021-3ee8ffef8010	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:12:17.503198+00	\N	f	\N
+30086ca9-0efe-4339-bf52-5156299f2cee	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:12:50.062406+00	\N	f	\N
+bc72d504-56de-4ee4-ae1f-3feca30d10cf	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:13:23.507942+00	\N	f	\N
+3d3aea8b-536b-4ad6-b67e-5589d29e9cc8	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:13:48.942061+00	\N	f	\N
 \.
 
 
@@ -2006,7 +2238,6 @@ f0e2110c-4ebf-443a-b2a4-38e973b43b79	Ex***ow	231	\N	\N	Example Error Message	"St
 
 COPY public.users (id, telegram_id, first_name, last_name, username, phone_number, rut, role, language_code, metadata, created_at, updated_at, deleted_at, password_hash, last_selected_provider_id) FROM stdin;
 b9f03843-eee6-4607-ac5a-496c6faa9ea1	5391760292	Roger	Gallegos	\N	\N	11111111-1	admin	en	{"email": "dev.n8n.stax@gmail.com"}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
-6b991a66-cbb1-4910-9507-5f43fc07983a	999999999	Test Admin	\N	admin_tester	\N	12345678-5	admin	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
 41ded616-b5c7-44ea-bed2-b9f9135c7320	888888888	Banned User	\N	banned_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N
 c28d963b-4ea0-4861-ac80-9c79cb55370f	777777777	Incomplete User	\N	incomplete_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
 d5d85414-4c5e-40ca-890d-cb91c93e4095	888777666	System Admin	\N	admin	\N	\N	admin	es	{}	2026-01-24 20:42:41.773789+00	2026-01-24 20:43:20.420308+00	\N	$2a$06$mHxcDiBy1pvl.RUnko.u.uNpsSP29MqlUqyEbPYXgJRWSdNUvfnLm	\N
@@ -2031,6 +2262,7 @@ af1172c7-508b-44bc-a82a-5d368d7fd631	2000003	Jean-Pierre	Núñez y Castillo	\N	\
 dc167392-26aa-4006-91cc-7a517e6ee903	2000009	Lúcia	Ibañez	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 b1e95f01-49b4-423c-b530-b4dc265e9082	2000010	Zoë	Almohávar	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 6daa9018-1df4-4dc3-a761-100e1ae11a09	123456789	Test	User	test_user	\N	\N	user	es	{}	2026-01-26 21:27:45.344063+00	2026-01-26 21:27:45.344063+00	\N	\N	\N
+f6a7b8c9-d0e1-2345-fabc-456789012345	999000999	Test Booker	\N	\N	\N	\N	user	es	{}	2026-02-10 13:17:46.32768+00	2026-02-10 13:17:46.32768+00	\N	\N	\N
 \.
 
 
@@ -2195,6 +2427,22 @@ ALTER TABLE ONLY public.bookings
 
 
 --
+-- Name: circuit_breaker_state circuit_breaker_state_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.circuit_breaker_state
+    ADD CONSTRAINT circuit_breaker_state_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: error_metrics error_metrics_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.error_metrics
+    ADD CONSTRAINT error_metrics_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: notification_configs notification_configs_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
@@ -2256,6 +2504,22 @@ ALTER TABLE ONLY public.services
 
 ALTER TABLE ONLY public.system_errors
     ADD CONSTRAINT system_errors_pkey PRIMARY KEY (error_id);
+
+
+--
+-- Name: circuit_breaker_state unique_circuit_workflow; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.circuit_breaker_state
+    ADD CONSTRAINT unique_circuit_workflow UNIQUE (workflow_name);
+
+
+--
+-- Name: error_metrics unique_daily_metric; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.error_metrics
+    ADD CONSTRAINT unique_daily_metric UNIQUE (metric_date, workflow_name, severity);
 
 
 --
@@ -2366,10 +2630,24 @@ CREATE INDEX idx_admin_users_username ON public.admin_users USING btree (usernam
 
 
 --
+-- Name: idx_app_config_category; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_app_config_category ON public.app_config USING btree (category);
+
+
+--
 -- Name: idx_app_config_key; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
 CREATE UNIQUE INDEX idx_app_config_key ON public.app_config USING btree (key);
+
+
+--
+-- Name: idx_app_config_key_category; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_app_config_key_category ON public.app_config USING btree (key, category);
 
 
 --
@@ -2443,6 +2721,20 @@ CREATE INDEX idx_bookings_user ON public.bookings USING btree (user_id) WHERE (d
 
 
 --
+-- Name: idx_circuit_breaker_workflow; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_circuit_breaker_workflow ON public.circuit_breaker_state USING btree (workflow_name);
+
+
+--
+-- Name: idx_error_metrics_date; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_metrics_date ON public.error_metrics USING btree (metric_date DESC);
+
+
+--
 -- Name: idx_firewall_entity; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -2461,6 +2753,13 @@ CREATE INDEX idx_notification_queue_booking_id ON public.notification_queue USIN
 --
 
 CREATE INDEX idx_notification_queue_created_at ON public.notification_queue USING btree (created_at DESC);
+
+
+--
+-- Name: idx_notification_queue_pending; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_notification_queue_pending ON public.notification_queue USING btree (status, next_retry_at) WHERE (status = 'pending'::public.notification_status);
 
 
 --
@@ -2534,6 +2833,48 @@ CREATE INDEX idx_security_firewall_entity ON public.security_firewall USING btre
 
 
 --
+-- Name: idx_system_errors_created; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_system_errors_created ON public.system_errors USING btree (created_at);
+
+
+--
+-- Name: idx_system_errors_created_at; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_system_errors_created_at ON public.system_errors USING btree (created_at);
+
+
+--
+-- Name: idx_system_errors_severity; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_system_errors_severity ON public.system_errors USING btree (severity);
+
+
+--
+-- Name: idx_system_errors_unresolved; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_system_errors_unresolved ON public.system_errors USING btree (is_resolved) WHERE (is_resolved = false);
+
+
+--
+-- Name: idx_system_errors_workflow; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_system_errors_workflow ON public.system_errors USING btree (workflow_name);
+
+
+--
+-- Name: idx_system_errors_workflow_created; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_system_errors_workflow_created ON public.system_errors USING btree (workflow_name, created_at DESC);
+
+
+--
 -- Name: idx_users_role; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -2601,6 +2942,13 @@ CREATE TRIGGER trg_notification_queue_update_timestamp BEFORE UPDATE ON public.n
 --
 
 CREATE TRIGGER trg_users_modtime BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.update_modtime();
+
+
+--
+-- Name: app_config trg_validate_app_config_availability; Type: TRIGGER; Schema: public; Owner: neondb_owner
+--
+
+CREATE TRIGGER trg_validate_app_config_availability BEFORE INSERT OR UPDATE ON public.app_config FOR EACH ROW EXECUTE FUNCTION public.validate_app_config_availability();
 
 
 --
@@ -2751,5 +3099,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE cloud_admin IN SCHEMA public GRANT ALL ON TABL
 -- PostgreSQL database dump complete
 --
 
-\unrestrict J0ggTJwAabCEkXyJTLWEUEADc0F4fr4JW2JnY0iqZeynEyuq5wz58TSnulXKq4i
+\unrestrict BNbZHwU5KStetqF8OjPvNmUMCygiAGlYMowbmO16IxB64XkeBcx97lbJNQncfQZ
 

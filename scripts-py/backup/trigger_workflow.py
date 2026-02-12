@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script to execute the workflow manually
 """
@@ -32,7 +44,7 @@ def execute_workflow_manually():
     Execute the workflow manually using the manual trigger
     """
     # Configuration
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
     API_KEY = get_api_key()
 
     headers = {
@@ -116,7 +128,7 @@ def get_recent_executions(workflow_id):
     """
     Get recent executions for the workflow
     """
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
     API_KEY = get_api_key()
 
     headers = {
@@ -159,7 +171,7 @@ if __name__ == "__main__":
     execute_workflow_manually()
 
     # Get the workflow ID again to fetch recent executions
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
     API_KEY = get_api_key()
 
     headers = {

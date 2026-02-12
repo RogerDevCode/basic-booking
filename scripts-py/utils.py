@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Utility functions for n8n workflow management
 """
@@ -14,7 +26,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from n8n_crud_agent import N8NCrudAgent
 
 
-def list_workflows_simple(api_url: str = "http://localhost:5678"):
+def list_workflows_simple(api_url: str = "https://n8n.stax.ink"):
     """
     Simple function to list all workflows
     """
@@ -44,7 +56,7 @@ def list_workflows_simple(api_url: str = "http://localhost:5678"):
         print("\nFailed to retrieve workflows.")
 
 
-def list_active_workflows_simple(api_url: str = "http://localhost:5678"):
+def list_active_workflows_simple(api_url: str = "https://n8n.stax.ink"):
     """
     Simple function to list active workflows
     """
@@ -68,7 +80,7 @@ def list_active_workflows_simple(api_url: str = "http://localhost:5678"):
         print("\nFailed to retrieve workflows.")
 
 
-def activate_workflow_simple(workflow_id: str, api_url: str = "http://localhost:5678"):
+def activate_workflow_simple(workflow_id: str, api_url: str = "https://n8n.stax.ink"):
     """
     Simple function to activate a specific workflow
     """
@@ -98,7 +110,7 @@ def activate_workflow_simple(workflow_id: str, api_url: str = "http://localhost:
         print(f"\n✗ Failed to activate workflow {workflow_id}")
 
 
-def create_and_activate_workflow_with_trigger(workflow_name: str, api_url: str = "http://localhost:5678"):
+def create_and_activate_workflow_with_trigger(workflow_name: str, api_url: str = "https://n8n.stax.ink"):
     """
     Create a new workflow with a proper trigger and then activate it
     """
@@ -185,7 +197,7 @@ def create_and_activate_workflow_with_trigger(workflow_name: str, api_url: str =
         print("✗ Failed to create workflow")
 
 
-def execute_workflow_manually(workflow_id: str, api_url: str = "http://localhost:5678"):
+def execute_workflow_manually(workflow_id: str, api_url: str = "https://n8n.stax.ink"):
     """
     Execute a workflow manually
     """
@@ -202,7 +214,7 @@ def execute_workflow_manually(workflow_id: str, api_url: str = "http://localhost
         print(f"Failed to execute workflow {workflow_id}")
 
 
-def get_recent_executions(workflow_id: str, limit: int = 5, api_url: str = "http://localhost:5678"):
+def get_recent_executions(workflow_id: str, limit: int = 5, api_url: str = "https://n8n.stax.ink"):
     """
     Get recent executions for a workflow
     """
@@ -239,7 +251,7 @@ def load_workflow_from_json(file_path: str) -> Dict:
     return workflow_data
 
 
-def execute_workflow_from_json(file_path: str, api_url: str = "http://localhost:5678"):
+def execute_workflow_from_json(file_path: str, api_url: str = "https://n8n.stax.ink"):
     """
     Execute the workflow from the JSON file
     """

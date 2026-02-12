@@ -1,0 +1,14 @@
+{
+  "text": "/book",
+  "channel": "telegram",
+  "user_id": "tg:123",
+  "chat_id": "123",
+  "context": {
+    "provider_slug": "proveedor-x"
+  },
+  "slot": {
+    "start": "2025-01-10T14:00:00Z",
+    "end": "2025-01-10T14:30:00Z"
+  },
+  "expected_error": "BOOK_SLOT_TAKEN"
+}

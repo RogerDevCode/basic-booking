@@ -1,0 +1,10 @@
+{
+  "headers": {
+    "authorization": "Bearer INVALID.TOKEN.VALUE"
+  },
+  "action": "admin.getConfig",
+  "payload": {
+    "request_id": "req_invalid_jwt_001",
+    "timestamp": "2026-01-29T12:00:00Z"
+  }
+}

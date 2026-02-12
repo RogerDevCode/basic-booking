@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script to create a new workflow with a proper trigger and then activate it
 """
@@ -111,7 +123,7 @@ def activate_workflow(api_url: str, api_key: str, workflow_id: str) -> bool:
 
 def main():
     # Configuration
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
     API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiYTA2MmZmOC04Mzc3LTRkZDMtOWQ5OS02ZmUwNDcxMzAzNGIiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiNDk4ZWZhOTctOWQ2MC00MjhiLWI1MzMtNTIxYzc2MDljOTBkIiwiaWF0IjoxNzcwMjEyNDY4fQ.50HHi-XfoG8ISAn4rIZbMkYmoVSEqcYofVMmvVQeXcE"
     
     workflow_name = f"Automatically Activated Workflow {uuid.uuid4().hex[:8]}"

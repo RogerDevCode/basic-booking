@@ -1,0 +1,149 @@
+{
+  "name": "BB_10_Macro_Test_Runner",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const fixtures = [\n    {\n      name: 'availability_valid',\n      payload: {\n        text: '/availability',\n        channel: 'telegram',\n        user_id: 'tg:123',\n        chat_id: '123',\n        context: { provider_slug: 'proveedor-x' },\n        date_range: { start: '2025-01-10', end: '2025-01-10' }\n      }\n    },\n    {\n      name: 'availability_no_slots',\n      payload: {\n        text: '/availability',\n        channel: 'telegram',\n        user_id: 'tg:123',\n        chat_id: '123',\n        context: { provider_slug: 'proveedor-x' },\n        date_range: { start: '2025-01-10', end: '2025-01-11' }\n      }\n    },\n    {\n      name: 'booking_valid',\n      payload: {\n        text: '/book',\n        channel: 'telegram',\n        user_id: 'tg:123',\n        chat_id: '123',\n        context: { provider_slug: 'proveedor-x' },\n        slot: { start: '2025-01-10T15:00:00Z', end: '2025-01-10T15:30:00Z' },\n        service_id: 'svc_001'\n      }\n    },\n    {\n      name: 'booking_slot_taken',\n      payload: {\n        text: '/book',\n        channel: 'telegram',\n        user_id: 'tg:123',\n        chat_id: '123',\n        context: { provider_slug: 'proveedor-x' },\n        slot: { start: '2025-01-10T14:00:00Z', end: '2025-01-10T14:30:00Z' }\n      }\n    },\n    {\n      name: 'admin_invalid_jwt',\n      payload: {\n        headers: { authorization: 'Bearer INVALID.TOKEN.VALUE' },\n        action: 'admin.getConfig',\n        payload: { request_id: 'req_invalid_jwt_001', timestamp: '2026-01-29T12:00:00Z' }\n      }\n    }\n  ];\n\n  return fixtures.map(f => ({ json: f }));\n} catch (e) {\n  return [{ json: { error: true, message: e.message } }];\n}"
+      },
+      "id": "build-fixtures",
+      "name": "Build Fixtures",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 200]
+    },
+    {
+      "parameters": {
+        "batchSize": 1
+      },
+      "id": "split-batches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [440, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nif (!item || !item.json) return [];\nconst { name, payload } = item.json;\nreturn [{ json: { ...payload, _test_case: name } }];"
+      },
+      "id": "load-payload",
+      "name": "Load Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 200]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_10_Macro_Workflow_Blueprint",
+          "mode": "list",
+          "cachedResultName": "BB_10_Macro_Workflow_Blueprint"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "exec-macro",
+      "name": "Execute Macro Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first();\nconst result = input?.json || {};\nconst testCase = result._test_case || 'unknown';\nconst ok = result.success === true || result.error === false;\nreturn [{ json: { test_case: testCase, success: ok, result } }];"
+      },
+      "id": "collect-result",
+      "name": "Collect Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 200]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Fixtures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fixtures": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Load Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Payload": {
+      "main": [
+        [
+          {
+            "node": "Execute Macro Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Macro Workflow": {
+      "main": [
+        [
+          {
+            "node": "Collect Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Result": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

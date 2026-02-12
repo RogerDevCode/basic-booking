@@ -1,0 +1,15 @@
+Extrae esquema de @database/schema.sql en JSON compacto minimalista (enum + tipos PostgreSQL incluidos).
+
+FORMATO: [{"name":"tabla","cols":[{"name":"col","type":"varchar(255)","null":true,"pk":false,"fk":"tabla.col","enum":["val1","val2"]},{"name":"id","type":"serial","pk":true}],"pk":["id"],"idx":["idx_name"],"enums":{}}]
+
+REGLAS:
+1. SOLO CREATE TABLE + ENUM/CREATE TYPE (ignora indexes/triggers/FK constraints sueltos)
+2. cols: name,type verbatim,null?(true/false),pk?(true/array),fk?(tabla.col o null),enum?(array o null)
+3. PK: array (["id"] o ["id1","id2"])
+4. idx: array nombres indexes (solo si CREATE INDEX explícito)
+5. enums: {"status":["active","inactive"]} por tabla
+6. Orden: aparición en schema.sql
+7. Output: JSON válido, 1-línea, minificado, <1KB total
+8. Tipos exactos: varchar(255), text[], jsonb, tsrange, ENUM('val1','val2')
+
+Prioriza tablas principales. Zero comentarios/SQL raw. Tokens mínimos para LLM.

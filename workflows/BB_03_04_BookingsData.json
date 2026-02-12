@@ -1,0 +1,278 @@
+{
+  "name": "BB_03_04_BookingsData",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bb03-bookings-data",
+        "options": {}
+      },
+      "id": "webhook-test-04",
+      "name": "Webhook Test",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 160],
+      "webhookId": "bb03-bookings-data"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger-04",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 360]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-entry-04",
+      "name": "Merge Entry",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [220, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * PARANOID GUARD: Bookings Data Input\n * Validates provider_id, query_start, query_end\n */\ntry {\n  const input = $input.item.json;\n  const errors = [];\n  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n  const ISO_DATE_REGEX = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{3})?Z$/;\n\n  if (!input.provider_id || !UUID_REGEX.test(input.provider_id)) {\n    errors.push('provider_id must be valid UUID');\n  }\n  if (!input.query_start || !ISO_DATE_REGEX.test(input.query_start)) {\n    errors.push('query_start must be ISO 8601 format (YYYY-MM-DDTHH:mm:ssZ)');\n  }\n  if (!input.query_end || !ISO_DATE_REGEX.test(input.query_end)) {\n    errors.push('query_end must be ISO 8601 format (YYYY-MM-DDTHH:mm:ssZ)');\n  }\n\n  // Validate date range logic\n  if (input.query_start && input.query_end) {\n    const start = new Date(input.query_start);\n    const end = new Date(input.query_end);\n    if (start >= end) {\n      errors.push('query_start must be before query_end');\n    }\n    const diffDays = (end - start) / (1000 * 60 * 60 * 24);\n    if (diffDays > 31) {\n      errors.push('Query range cannot exceed 31 days');\n    }\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'VALIDATION_FAILED',\n        error_message: errors.join('; '),\n        data: null\n      }\n    }];\n  }\n\n  return [{ json: { ...input, _guard_passed: true } }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Paranoid Guard error: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "paranoid-guard-04",
+      "name": "Paranoid Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 260]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "version": 3 },
+                "conditions": [
+                  { "id": "guard-failed", "leftValue": "={{ $json.success === false }}", "operator": { "type": "boolean", "operation": "true" }}
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Guard Failed"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-guard-04",
+      "name": "Switch: Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [660, 260]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  id,\n  start_time,\n  end_time,\n  status\nFROM bookings\nWHERE provider_id = '{{ $json.provider_id }}'\n  AND start_time < '{{ $json.query_end }}'::timestamptz\n  AND end_time > '{{ $json.query_start }}'::timestamptz\n  AND status IN ('pending', 'confirmed')\n  AND deleted_at IS NULL\nORDER BY start_time ASC\nLIMIT 500;",
+        "options": {
+          "queryTimeout": 10000
+        }
+      },
+      "id": "db-get-bookings-04",
+      "name": "DB: Get Bookings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [880, 340],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "version": 3 },
+                "conditions": [
+                  { "id": "has-error", "leftValue": "={{ $json.error }}", "operator": { "type": "boolean", "operation": "true" }}
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "DB Error"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-db-error-04",
+      "name": "Switch: DB Error?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1100, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Prepare error data for BB_00 Global Error Handler\n */\ntry {\n  const input = $input.item.json;\n  const guardData = $('Paranoid Guard').item.json;\n  \n  return [{\n    json: {\n      workflow_name: 'BB_03_04_BookingsData',\n      node_name: 'DB: Get Bookings',\n      error_type: 'DATABASE_ERROR',\n      error_message: input.message || 'Unknown database error',\n      severity: 'HIGH',\n      context: {\n        provider_id: guardData.provider_id,\n        query_range: {\n          start: guardData.query_start,\n          end: guardData.query_end\n        },\n        timestamp: new Date().toISOString()\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      workflow_name: 'BB_03_04_BookingsData',\n      node_name: 'Prepare Error Data',\n      error_type: 'INTERNAL_ERROR',\n      error_message: 'Failed to prepare error data',\n      severity: 'CRITICAL',\n      context: {}\n    }\n  }];\n}"
+      },
+      "id": "prepare-error-04",
+      "name": "Prepare Error Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 240]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "_Za9GzqB2cS9HVwBglt43",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "notify-error-04",
+      "name": "BB_00: Notify Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1540, 240],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    success: false,\n    error_code: 'DATABASE_ERROR',\n    error_message: 'Error accessing bookings. Please try again later.',\n    data: null\n  }\n}];"
+      },
+      "id": "format-db-error-04",
+      "name": "Format: DB Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Process Bookings Data\n * Aggregates all booking records into structured response\n */\ntry {\n  const items = $input.all();\n  const bookings = items\n    .map(item => item.json)\n    .filter(b => b.start_time && b.end_time)\n    .map(b => ({\n      id: b.id,\n      start_time: b.start_time,\n      end_time: b.end_time,\n      status: b.status\n    }));\n\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      data: {\n        bookings: bookings,\n        total_count: bookings.length\n      }\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error processing bookings: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "process-bookings-04",
+      "name": "Process: Bookings Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-webhook",
+              "leftValue": "={{ $('Webhook Test').isExecuted }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-webhook-04",
+      "name": "IF: From Webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1760, 340]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "X-Workflow",
+                "value": "BB_03_04_BookingsData"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook-04",
+      "name": "Respond Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1980, 240]
+    },
+    {
+      "parameters": {},
+      "id": "output-04",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1980, 440]
+    }
+  ],
+  "connections": {
+    "Webhook Test": {
+      "main": [[{"node": "Merge Entry", "type": "main", "index": 0}]]
+    },
+    "Start": {
+      "main": [[{"node": "Merge Entry", "type": "main", "index": 1}]]
+    },
+    "Merge Entry": {
+      "main": [[{"node": "Paranoid Guard", "type": "main", "index": 0}]]
+    },
+    "Paranoid Guard": {
+      "main": [[{"node": "Switch: Guard OK?", "type": "main", "index": 0}]]
+    },
+    "Switch: Guard OK?": {
+      "main": [
+        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
+        [{"node": "DB: Get Bookings", "type": "main", "index": 0}]
+      ]
+    },
+    "DB: Get Bookings": {
+      "main": [[{"node": "Switch: DB Error?", "type": "main", "index": 0}]]
+    },
+    "Switch: DB Error?": {
+      "main": [
+        [{"node": "Prepare Error Data", "type": "main", "index": 0}],
+        [{"node": "Process: Bookings Data", "type": "main", "index": 0}]
+      ]
+    },
+    "Prepare Error Data": {
+      "main": [[{"node": "BB_00: Notify Error", "type": "main", "index": 0}]]
+    },
+    "BB_00: Notify Error": {
+      "main": [[{"node": "Format: DB Error Response", "type": "main", "index": 0}]]
+    },
+    "Format: DB Error Response": {
+      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
+    },
+    "Process: Bookings Data": {
+      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
+    },
+    "IF: From Webhook?": {
+      "main": [
+        [{"node": "Respond Webhook", "type": "main", "index": 0}],
+        [{"node": "Output", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "_Za9GzqB2cS9HVwBglt43"
+  }
+}

@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts-py')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script para importar workflows desde archivos JSON al servidor n8n
 Este script incluye instrucciones para configurar n8n si es necesario
@@ -16,7 +28,7 @@ def check_n8n_status():
     Checks if n8n is running and accessible
     """
     try:
-        response = subprocess.run(['curl', '-s', 'http://localhost:5678/healthz'], 
+        response = subprocess.run(['curl', '-s', 'https://n8n.stax.ink/healthz'], 
                                   capture_output=True, text=True, timeout=10)
         if "ok" in response.stdout:
             print("✓ n8n service is running and accessible")
@@ -36,7 +48,7 @@ def setup_instructions():
     print("SETUP INSTRUCTIONS FOR N8N")
     print("=" * 70)
     print("\nBefore you can import workflows, you need to set up your n8n instance:")
-    print("\n1. Open your browser and navigate to: http://localhost:5678")
+    print("\n1. Open your browser and navigate to: https://n8n.stax.ink")
     print("2. Follow the initial setup wizard to create your first user account")
     print("3. After creating your account, go to 'User Settings' > 'API' tab")
     print("4. Click 'Create API Key' and copy the generated key")

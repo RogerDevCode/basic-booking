@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 N8N CRUD Agent - Performs Create, Read, Update, Delete operations on n8n workflows
 """
@@ -316,12 +328,11 @@ class N8NCrudAgent:
             List of executions or None if error occurs
         """
         try:
+            params = {'limit': limit, 'includeData': 'true'}
             if workflow_id:
-                url = f"{self.api_url}/api/v1/executions?filter={{\"workflowId\":\"{workflow_id}\"}}&limit={limit}"
-            else:
-                url = f"{self.api_url}/api/v1/executions?limit={limit}"
+                params['workflowId'] = workflow_id
 
-            response = requests.get(url, headers=self.headers)
+            response = requests.get(f"{self.api_url}/api/v1/executions", headers=self.headers, params=params)
 
             if response.status_code == 200:
                 executions_data = response.json()
@@ -345,7 +356,7 @@ class N8NCrudAgent:
             Execution data or None if error occurs
         """
         try:
-            response = requests.get(f"{self.api_url}/api/v1/executions/{execution_id}", headers=self.headers)
+            response = requests.get(f"{self.api_url}/api/v1/executions/{execution_id}?includeData=true", headers=self.headers)
 
             if response.status_code == 200:
                 execution = response.json()

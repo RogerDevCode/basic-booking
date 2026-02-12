@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Test script to verify the new publish/unpublish functionality
 """
@@ -15,7 +27,7 @@ from n8n_crud_agent import N8NCrudAgent
 
 def test_publish_unpublish():
     # Configuration
-    API_URL = "http://localhost:5678"
+    API_URL = "https://n8n.stax.ink"
 
     # Get API key from environment variables
     API_KEY = os.environ.get('N8N_API_KEY') or os.environ.get('N8N_ACCESS_TOKEN')

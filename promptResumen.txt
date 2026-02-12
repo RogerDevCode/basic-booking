@@ -1,0 +1,19 @@
+Analiza proyecto n8n booking ANÁLISIS FUNCIONAL PURO. Extrae PUNTO DE INICIO para cualquier LLM continúe desarrollo. Genera @resumenBooking.md.
+
+ESTRUCTURA:
+## 🎯 OBJETIVO: Booking [doctores/gyms] → reserva→recordatorio→facturación
+## 🔄 FLUJO PRINCIPAL: Mermaid 1-línea (n8n→DB→UI→Telegram→GCal)
+## 🗄️ DB: JSON esquema clave (6 tablas principales @database/schema.sql)
+## 📋 WORKFLOWS: Lista ejecutable @workflows/*.json → trigger→acciones
+## 🖥️ UI: Estados principales @ui (rutas/componentes)
+## 📡 INTEGRACIONES: Telegram bot + GCal sync
+
+REGLAS:
+- ANÁLISIS FUNCIONAL: ¿Qué hace? ¿Cómo fluye? ¿Qué conecta?
+- PUNTO DE INICIO: "Para agregar X, modifica workflow Y + tabla Z"
+- @Arena-ClaudeOpus.txt: Solo contexto histórico (qué ES, no qué falta)
+- Cero fixes/TO-DOs/prioridades. Solo ESTADO ACTUAL.
+- Cada sección: 1 párrafo + 1 diagrama/lista accionable.
+- Markdown limpio, copy-paste directo para LLM.
+
+Output ÚNICO: @resumenBooking.md listo para desarrollo inmediato.

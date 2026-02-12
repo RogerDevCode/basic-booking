@@ -1,0 +1,73 @@
+{
+    "name": "BB_03_Helper_Validate_Config",
+    "nodes": [
+        {
+            "parameters": {
+                "inputSource": "passthrough"
+            },
+            "id": "start-node",
+            "name": "Start",
+            "type": "n8n-nodes-base.executeWorkflowTrigger",
+            "typeVersion": 1.1,
+            "position": [
+                260,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "try {\n  const input = $input.item.json;\n  const errors = [];\n\n  // Validar timezone\n  const timezone = input.timezone;\n  if (!timezone || typeof timezone !== 'string' || timezone.trim() === '') {\n    errors.push('timezone is required and must be a non-empty string');\n  } else {\n    // Validar formato básico de timezone (ej: America/Santiago)\n    if (!/^[A-Za-z]+\\/[A-Za-z_]+$/.test(timezone)) {\n      errors.push('timezone must be in format Area/Location (e.g., America/Santiago)');\n    }\n  }\n\n  // Validar booking_window_days\n  let bookingWindowDays = input.booking_window_days;\n  if (bookingWindowDays === undefined || bookingWindowDays === null || bookingWindowDays === '') {\n    errors.push('booking_window_days is required');\n  } else {\n    bookingWindowDays = parseInt(bookingWindowDays, 10);\n    if (isNaN(bookingWindowDays) || bookingWindowDays < 1 || bookingWindowDays > 90) {\n      errors.push('booking_window_days must be an integer between 1 and 90');\n    }\n  }\n\n  // Validar min_advance_hours\n  let minAdvanceHours = input.min_advance_hours;\n  if (minAdvanceHours === undefined || minAdvanceHours === null || minAdvanceHours === '') {\n    errors.push('min_advance_hours is required');\n  } else {\n    minAdvanceHours = parseInt(minAdvanceHours, 10);\n    if (isNaN(minAdvanceHours) || minAdvanceHours < 0 || minAdvanceHours > 72) {\n      errors.push('min_advance_hours must be an integer between 0 and 72');\n    }\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'INVALID_CONFIG',\n        error_message: 'Configuration validation failed: ' + errors.join('; '),\n        validated_config: null\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      success: true,\n      validated_config: {\n        timezone: timezone,\n        booking_window_days: bookingWindowDays,\n        min_advance_hours: minAdvanceHours\n      }\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'VALIDATION_ERROR',\n      error_message: 'Error validating configuration: ' + e.message,\n      validated_config: null\n    }\n  }];\n}"
+            },
+            "id": "validate-config-node",
+            "name": "Validate Config",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                480,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "try {\n  const input = $input.item.json;\n  \n  // Pasar resultado tal cual (ya está formateado)\n  return [{ json: input }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error formatting response',\n      validated_config: null\n    }\n  }];\n}"
+            },
+            "id": "format-response-node",
+            "name": "Format Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                700,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Start": {
+            "main": [
+                [
+                    {
+                        "node": "Validate Config",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Validate Config": {
+            "main": [
+                [
+                    {
+                        "node": "Format Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1",
+        "errorWorkflow": "_Za9GzqB2cS9HVwBglt43",
+        "callerPolicy": "workflowsFromSameOwner"
+    }
+}

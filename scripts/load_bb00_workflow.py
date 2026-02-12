@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+
+# --- Watchdog Injection ---
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts-py')))
+try:
+    import watchdog
+    watchdog.setup(300)
+except ImportError:
+    print('Warning: watchdog module not found', file=sys.stderr)
+# --------------------------
+
 """
 Script para cargar el workflow BB_00_Global_Error_Handler al servidor n8n
 usando el agente Python con fallback automático
@@ -80,7 +92,7 @@ def main():
     if not api_key_configured:
         print("Advertencia: No se ha configurado la variable de ambiente N8N_API_KEY o N8N_ACCESS_TOKEN")
         print("Siga las instrucciones para configurar n8n antes de continuar:")
-        print("1. Abra http://localhost:5678 en su navegador")
+        print("1. Abra https://n8n.stax.ink en su navegador")
         print("2. Complete el asistente de configuración inicial")
         print("3. Vaya a 'Configuración de Usuario' > pestaña 'API'")
         print("4. Haga clic en 'Crear clave API' y copie la clave generada")

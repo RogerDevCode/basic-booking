@@ -1,0 +1,18 @@
+{
+  "update_id": 999999,
+  "message": {
+    "message_id": 1,
+    "from": {
+      "id": "not-a-number",
+      "is_bot": false,
+      "first_name": "",
+      "username": "invalid*user"
+    },
+    "chat": {
+      "id": null,
+      "type": "private"
+    },
+    "date": "invalid-date",
+    "text": ""
+  }
+}
