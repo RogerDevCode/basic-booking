@@ -5,63 +5,52 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "book-v3",
-        "responseMode": "responseNode",
-        "options": {
-          "rawBody": false
-        }
+        "responseMode": "lastNode",
+        "options": {}
       },
-      "id": "main_webhook",
-      "name": "Webhook",
+      "id": "webhook",
+      "name": "🧪 Test Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
+      "typeVersion": 2,
       "position": [
         0,
         300
       ],
-      "webhookId": "bb04-main-webhook"
+      "webhookId": "book-v3-test"
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "1",
-              "name": "raw_input",
-              "value": "={{ $json }}",
-              "type": "object"
-            }
-          ]
-        },
-        "options": {}
+        "inputSource": "passthrough"
       },
-      "id": "prep_input",
-      "name": "Prepare Input",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.3,
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
       "position": [
-        220,
-        300
+        0,
+        500
       ]
     },
     {
       "parameters": {
-        "workflowId": "={{ $workflow('BB_04_Validate_Input').id }}",
-        "options": {}
+        "jsCode": "const WORKFLOW_ID = 'BB_04_Main_Orchestrator';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst validActions = ['booking', 'cancel', 'reschedule', 'booking_create', 'booking_cancel', 'booking_reschedule', 'list_bookings'];\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.action || !validActions.includes(raw.action)) errors.push(`Invalid action: ${sanitize(raw.action)}`);\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be valid UUID');\n  if (raw.provider_id && !isValidUUID(raw.provider_id)) errors.push('provider_id must be valid UUID');\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
-      "id": "call_validate",
-      "name": "\u2192 Validate Input",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
+      "id": "guard",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        440,
-        300
+        200,
+        400
       ]
     },
     {
       "parameters": {
+        "mode": "rules",
         "rules": {
           "values": [
             {
+              "outputKey": "error",
               "conditions": {
                 "options": {
                   "caseSensitive": true,
@@ -69,13 +58,12 @@
                 },
                 "conditions": [
                   {
-                    "id": "error_check",
-                    "leftValue": "={{ $json.error }}",
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
                     "operator": {
                       "type": "boolean",
-                      "operation": "true"
-                    },
-                    "rightValue": ""
+                      "operation": "false"
+                    }
                   }
                 ],
                 "combinator": "and"
@@ -87,278 +75,121 @@
           "fallbackOutput": "extra"
         }
       },
-      "id": "check_valid",
-      "name": "Valid?",
+      "id": "switch-guard",
+      "name": "Guard OK?",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        660,
+        400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const WORKFLOW_ID = 'BB_04_Main_Orchestrator';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
         300
       ]
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {
-          "responseCode": "={{ $json.status || 400 }}"
-        }
+        "jsCode": "const WORKFLOW_ID = 'BB_04_Main_Orchestrator';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'ORCH_ERROR', error_message: 'Orchestration failed', data: null, _meta: meta() } }];"
       },
-      "id": "error_response",
-      "name": "Error Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
+      "id": "error",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        880,
-        460
+        600,
+        500
       ]
     },
     {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "outputKey": "booking",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "action_booking",
-                    "leftValue": "={{ $json.action }}",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "rightValue": "booking"
-                  }
-                ],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "cancel",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "action_cancel",
-                    "leftValue": "={{ $json.action }}",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "rightValue": "cancel"
-                  }
-                ],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "reschedule",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "action_reschedule",
-                    "leftValue": "={{ $json.action }}",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "rightValue": "reschedule"
-                  }
-                ],
-                "combinator": "and"
-              }
-            }
-          ]
-        },
-        "options": {
-          "fallbackOutput": "extra"
-        }
-      },
-      "id": "action_router",
-      "name": "Action Router",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        880,
-        140
-      ]
-    },
-    {
-      "parameters": {
-        "workflowId": "={{ $workflow('BB_04_Booking_Create').id }}",
-        "options": {}
-      },
-      "id": "call_booking",
-      "name": "\u2192 Create Booking",
-      "type": "n8n-nodes-base.executeWorkflow",
+      "parameters": {},
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1120,
-        20
-      ]
-    },
-    {
-      "parameters": {
-        "workflowId": "={{ $workflow('BB_04_Booking_Cancel').id }}",
-        "options": {}
-      },
-      "id": "call_cancel",
-      "name": "\u2192 Cancel Booking",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [
-        1120,
-        140
-      ]
-    },
-    {
-      "parameters": {
-        "workflowId": "={{ $workflow('BB_04_Booking_Reschedule').id }}",
-        "options": {}
-      },
-      "id": "call_reschedule",
-      "name": "\u2192 Reschedule Booking",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [
-        1120,
-        260
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {
-          "responseCode": "={{ $json.status || 200 }}"
-        }
-      },
-      "id": "success_response",
-      "name": "Success Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1340,
-        140
+        800,
+        400
       ]
     }
   ],
   "connections": {
-    "Webhook": {
+    "🧪 Test Webhook": {
       "main": [
         [
           {
-            "node": "Prepare Input",
+            "node": "Guard",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Input": {
+    "Start": {
       "main": [
         [
           {
-            "node": "\u2192 Validate Input",
+            "node": "Guard",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\u2192 Validate Input": {
+    "Guard": {
       "main": [
         [
           {
-            "node": "Valid?",
+            "node": "Guard OK?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Valid?": {
+    "Guard OK?": {
       "main": [
         [
           {
-            "node": "Error Response",
+            "node": "Error",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Action Router",
+            "node": "Success",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Action Router": {
+    "Success": {
       "main": [
         [
           {
-            "node": "\u2192 Create Booking",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "\u2192 Cancel Booking",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "\u2192 Reschedule Booking",
+            "node": "Output",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\u2192 Create Booking": {
+    "Error": {
       "main": [
         [
           {
-            "node": "Success Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "\u2192 Cancel Booking": {
-      "main": [
-        [
-          {
-            "node": "Success Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "\u2192 Reschedule Booking": {
-      "main": [
-        [
-          {
-            "node": "Success Response",
+            "node": "Output",
             "type": "main",
             "index": 0
           }
@@ -367,6 +198,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }

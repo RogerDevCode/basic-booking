@@ -6,14 +6,12 @@
         "httpMethod": "POST",
         "path": "bb04-validate",
         "responseMode": "lastNode",
-        "options": {
-          "rawBody": false
-        }
+        "options": {}
       },
-      "id": "test_webhook",
-      "name": "\ud83e\uddea Test Webhook",
+      "id": "webhook",
+      "name": "🧪 Test Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
+      "typeVersion": 2,
       "position": [
         0,
         300
@@ -22,24 +20,176 @@
     },
     {
       "parameters": {
-        "jsCode": "try {\n    const allItems = $input.all();\n    if (!allItems || allItems.length === 0) {\n        return [{ json: { error: true, code: \"ERR_NO_DATA\", message: \"No data received\", status: 400 } }];\n    }\n    \n    const root = allItems[0].json || {};\n    const input = root.body ? root.body : root;\n    \n    const errors = [];\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n    const validActions = ['booking', 'cancel', 'reschedule'];\n\n    // Validar action\n    if (!input.action || !validActions.includes(input.action)) {\n        errors.push(\"Invalid action. Must be: booking, cancel, reschedule\");\n    }\n\n    // Validar UUIDs base\n    if (!input.user_id || !uuidRegex.test(input.user_id)) {\n        errors.push(\"Invalid user_id format\");\n    }\n    \n    if (!input.provider_id || !uuidRegex.test(input.provider_id)) {\n        errors.push(\"Invalid provider_id format\");\n    }\n\n    // Validaciones espec\u00edficas por acci\u00f3n\n    if (input.action === 'booking') {\n        const start = new Date(input.start_time);\n        const end = new Date(input.end_time);\n        \n        if (isNaN(start.getTime())) errors.push(\"Invalid start_time format\");\n        if (isNaN(end.getTime())) errors.push(\"Invalid end_time format\");\n        if (start.getTime() >= end.getTime()) errors.push(\"start_time must be before end_time\");\n        \n        input.duration_min = (end - start) / (1000 * 60);\n        input.service_id = input.service_id || null;\n    }\n\n    if (input.action === 'cancel') {\n        if (!input.booking_id || !uuidRegex.test(input.booking_id)) {\n            errors.push(\"Invalid booking_id format\");\n        }\n    }\n\n    if (input.action === 'reschedule') {\n        if (!input.booking_id || !uuidRegex.test(input.booking_id)) {\n            errors.push(\"Invalid booking_id format\");\n        }\n        \n        const newStart = new Date(input.new_start_time);\n        const newEnd = new Date(input.new_end_time);\n        \n        if (isNaN(newStart.getTime())) errors.push(\"Invalid new_start_time format\");\n        if (isNaN(newEnd.getTime())) errors.push(\"Invalid new_end_time format\");\n        if (newStart.getTime() >= newEnd.getTime()) errors.push(\"new_start_time must be before new_end_time\");\n        \n        input.new_duration_min = (newEnd - newStart) / (1000 * 60);\n        input.service_id = input.service_id || null;\n    }\n\n    if (errors.length > 0) {\n        return [{ json: { error: true, code: \"ERR_VALIDATION\", details: errors, message: \"Validation failed\", status: 400 } }];\n    }\n\n    return [{ json: { ...input, error: false, validated: true, timestamp: new Date().toISOString() } }];\n\n} catch (e) { \n    console.error('[Validate Input] Error:', e.message);\n    return [{ json: { error: true, code: \"ERR_VALIDATION_CRASH\", message: \"Validation error\", details: e.message, status: 500 } }]; \n}"
+        "inputSource": "passthrough"
       },
-      "id": "validate_logic",
-      "name": "Validate Logic",
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const WORKFLOW_ID = 'BB_04_Validate_Input';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst validActions = ['booking', 'cancel', 'reschedule', 'booking_create', 'booking_cancel', 'booking_reschedule', 'list_bookings'];\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  let raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.action || !validActions.includes(raw.action)) errors.push(`Invalid action: ${sanitize(raw.action)}`);\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be valid UUID');\n  if (raw.provider_id && !isValidUUID(raw.provider_id)) errors.push('provider_id must be valid UUID');\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+      },
+      "id": "guard",
+      "name": "Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
+        200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const WORKFLOW_ID = 'BB_04_Validate_Input';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
         300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const WORKFLOW_ID = 'BB_04_Validate_Input';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+      },
+      "id": "error-guard",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        500
       ]
     }
   ],
   "connections": {
-    "\ud83e\uddea Test Webhook": {
+    "🧪 Test Webhook": {
       "main": [
         [
           {
-            "node": "Validate Logic",
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Guard OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error": {
+      "main": [
+        [
+          {
+            "node": "Output",
             "type": "main",
             "index": 0
           }
@@ -48,6 +198,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }

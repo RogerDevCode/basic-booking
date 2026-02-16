@@ -5,20 +5,35 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "telegram-webhook",
-        "responseMode": "responseNode"
+        "responseMode": "lastNode",
+        "options": {}
       },
-      "id": "web",
-      "name": "Webhook",
+      "id": "webhook",
+      "name": "🧪 Test Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
+      "typeVersion": 2,
       "position": [
         0,
-        0
+        300
+      ],
+      "webhookId": "telegram-webhook-test"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        500
       ]
     },
     {
       "parameters": {
-        "jsCode": "const input = items[0].json; const body = input.body; if (!body) return [{ json: { error: true } }]; const message = body.message || body.channel_post; const chatId = message?.chat?.id; const text = message?.text || ''; if (!chatId) return [{ json: { error: true } }]; return [{ json: { chatId, text, firstName: message?.from?.first_name || 'User' } }];"
+        "jsCode": "const WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  \n  // Parse Telegram message format\n  const message = raw.message || {};\n  const chatId = message.chat?.id;\n  const text = sanitize(message.text || '');\n  const firstName = sanitize(message.from?.first_name || 'User');\n  \n  if (!chatId) return fail('VAL_NO_CHAT_ID', 'Missing chat.id in message');\n  \n  return ok({\n    chat_id: chatId,\n    text: text,\n    first_name: firstName,\n    command: text.split(' ')[0] || ''\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -26,20 +41,7 @@
       "typeVersion": 2,
       "position": [
         200,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst text = $json.text;\nlet action = \"unknown\";\nlet slug = null;\n\nif (text.startsWith(\"/start \") && text.length > 7) {\n    action = \"set_context\";\n    slug = text.replace(\"/start \", \"\").trim();\n} else if (text.startsWith(\"/book\")) {\n    action = \"book\";\n} else if (text.startsWith(\"/list\")) {\n    action = \"list\";\n} else if (text.startsWith(\"/help\")) {\n    action = \"help\";\n}\n\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst dateStr = tomorrow.toISOString().split('T')[0];\n\nreturn [{ json: { ...$json, action, slug, target_date: dateStr } }];\n"
-      },
-      "id": "analyze",
-      "name": "Analyze Intent",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        400,
-        0
+        400
       ]
     },
     {
@@ -48,7 +50,7 @@
         "rules": {
           "values": [
             {
-              "outputKey": "set_context",
+              "outputKey": "error",
               "conditions": {
                 "options": {
                   "caseSensitive": true,
@@ -56,163 +58,11 @@
                 },
                 "conditions": [
                   {
-                    "id": "check-action",
-                    "leftValue": "={{ $json.action }}",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals",
-                      "value": "set_context"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "book",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "check-action",
-                    "leftValue": "={{ $json.action }}",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals",
-                      "value": "book"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              }
-            },
-            {
-              "outputKey": "list",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "check-action",
-                    "leftValue": "={{ $json.action }}",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals",
-                      "value": "list"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              }
-            }
-          ]
-        },
-        "options": {
-          "fallbackOutput": 1
-        }
-      },
-      "id": "router",
-      "name": "Router",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        600,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "WITH res AS (SELECT id, name FROM public.providers WHERE slug = $2) UPDATE public.users SET last_selected_provider_id = res.id FROM res WHERE telegram_id = $1 RETURNING res.name as provider_name;",
-        "queryParameters": {
-          "values": [
-            {
-              "value": "={{ $json.chatId }}"
-            },
-            {
-              "value": "={{ $json.slug }}"
-            }
-          ]
-        }
-      },
-      "id": "db_set",
-      "name": "DB: Set Context",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        850,
-        -200
-      ],
-      "credentials": {
-        "postgres": {
-          "name": "Postgres Neon"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { status: 'success', message: '✅ Seleccionado: ' + ($json.provider_name || 'Desconocido') } }}"
-      },
-      "id": "resp_set",
-      "name": "Respond Set",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1100,
-        -200
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT u.last_selected_provider_id, r.name as provider_name FROM public.users u LEFT JOIN public.providers r ON u.last_selected_provider_id = r.id WHERE u.telegram_id = $1;",
-        "queryParameters": {
-          "values": [
-            {
-              "value": "={{ $json.chatId }}"
-            }
-          ]
-        }
-      },
-      "id": "db_get",
-      "name": "DB: Get Context",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        850,
-        100
-      ],
-      "credentials": {
-        "postgres": {
-          "name": "Postgres Neon"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "mode": "rules",
-        "rules": {
-          "values": [
-            {
-              "outputKey": "has_ctx",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "check-ctx",
-                    "leftValue": "={{ !!$json.last_selected_provider_id }}",
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
                     "operator": {
                       "type": "boolean",
-                      "operation": "true"
+                      "operation": "false"
                     }
                   }
                 ],
@@ -222,120 +72,69 @@
           ]
         },
         "options": {
-          "fallbackOutput": 1
+          "fallbackOutput": "extra"
         }
       },
-      "id": "check_ctx",
-      "name": "Has Resource?",
+      "id": "switch-guard",
+      "name": "Guard OK?",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        1100,
-        100
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { error: true, message: '⚠️ Primero selecciona un recurso con /list' } }}"
-      },
-      "id": "resp_no_ctx",
-      "name": "Respond No Context",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1350,
-        250
-      ]
-    },
-    {
-      "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "BB_03_Availability_Engine",
-          "mode": "list",
-          "cachedResultName": "BB_03_Availability_Engine"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "provider_id": "={{ $json.last_selected_provider_id }}",
-            "date": "={{ $node['Analyze Intent'].json.target_date }}"
-          }
-        }
-      },
-      "id": "exec_avail",
-      "name": "Call 'BB_03'",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [
-        1350,
-        50
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { result: 'Disponibilidad para ' + $node['DB: Get Context'].json.provider_name, slots: $json.slots } }}"
-      },
-      "id": "resp_slots",
-      "name": "Respond Slots",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1600,
-        50
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT name, slug FROM public.providers WHERE deleted_at IS NULL;"
-      },
-      "id": "db_list",
-      "name": "DB: List Resources",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        850,
+        400,
         400
-      ],
-      "credentials": {
-        "postgres": {
-          "name": "Postgres Neon"
-        }
-      }
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all(); const list = items.map(i => `• ${i.json.name}: /start ${i.json.slug}`).join('\n'); return [{ json: { message: '📋 Recursos disponibles:\n' + list } }];"
+        "jsCode": "const WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
-      "id": "fmt_list",
-      "name": "Format List",
+      "id": "success",
+      "name": "Success",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        400
+        600,
+        300
       ]
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}"
+        "jsCode": "const WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'TG_ERROR', error_message: 'Telegram gateway error', data: null, _meta: meta() } }];"
       },
-      "id": "resp_list",
-      "name": "Respond List",
-      "type": "n8n-nodes-base.respondToWebhook",
+      "id": "error",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        500
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1350,
+        800,
         400
       ]
     }
   ],
   "connections": {
-    "Webhook": {
+    "🧪 Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
       "main": [
         [
           {
@@ -350,116 +149,47 @@
       "main": [
         [
           {
-            "node": "Analyze Intent",
+            "node": "Guard OK?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Analyze Intent": {
+    "Guard OK?": {
       "main": [
         [
           {
-            "node": "Router",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Router": {
-      "main": [
-        [
-          {
-            "node": "DB: Set Context",
+            "node": "Error",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "DB: Get Context",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "DB: List Resources",
+            "node": "Success",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB: Set Context": {
+    "Success": {
       "main": [
         [
           {
-            "node": "Respond Set",
+            "node": "Output",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB: Get Context": {
+    "Error": {
       "main": [
         [
           {
-            "node": "Has Resource?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Resource?": {
-      "main": [
-        [
-          {
-            "node": "Call 'BB_03'",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Respond No Context",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call 'BB_03'": {
-      "main": [
-        [
-          {
-            "node": "Respond Slots",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "DB: List Resources": {
-      "main": [
-        [
-          {
-            "node": "Format List",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format List": {
-      "main": [
-        [
-          {
-            "node": "Respond List",
+            "node": "Output",
             "type": "main",
             "index": 0
           }
@@ -468,6 +198,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }
