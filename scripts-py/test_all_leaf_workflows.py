@@ -92,8 +92,8 @@ TEST_CASES = {
         "webhook_path": "bb03-bookings-data",
         "tests": [
             {
-                "name": "Happy path - any input",
-                "input": {"provider_slug": "test-provider", "target_date": str(date.today())},
+                "name": "Happy path - valid provider_id",
+                "input": {"provider_id": "00000000-0000-0000-0000-000000000001"},
                 "expected_success": True
             }
         ]
