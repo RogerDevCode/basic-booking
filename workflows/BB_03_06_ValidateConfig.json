@@ -5,178 +5,260 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "bb03-validate-config",
+        "responseMode": "lastNode",
         "options": {}
       },
-      "id": "webhook-test-06",
-      "name": "Webhook Test",
+      "id": "webhook",
+      "name": "\ud83e\uddea Test Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 160],
-      "webhookId": "bb03-validate-config"
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bb03-validate-config-test"
     },
     {
       "parameters": {
         "inputSource": "passthrough"
       },
-      "id": "trigger-06",
+      "id": "trigger",
       "name": "Start",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [0, 360]
+      "position": [
+        0,
+        500
+      ]
     },
     {
       "parameters": {
-        "mode": "combine",
-        "combineBy": "combineAll",
-        "options": {}
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_06_ValidateConfig';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
-      "id": "merge-entry-06",
-      "name": "Merge Entry",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [220, 260]
-    },
-    {
-      "parameters": {
-        "jsCode": "/**\n * PARANOID GUARD: Validate Config Input\n * \n * Validates configuration parameters for slot availability calculation.\n * Applies defaults where values are missing and validates ranges.\n * \n * Input Fields:\n * - provider_id: UUID (required for context)\n * - timezone: string (optional, defaults to UTC)\n * - booking_window_days: number (optional, defaults to 14)\n * - min_advance_hours: number (optional, defaults to 2)\n * - max_slots_per_query: number (optional, defaults to 1000)\n * - schedules: array (optional, for schedule-specific validation)\n * \n * Output: Validated and normalized configuration\n */\ntry {\n  const input = $input.item.json;\n  const errors = [];\n  const warnings = [];\n\n  // === Regex Patterns ===\n  const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n  \n  // Common IANA timezone pattern (not exhaustive but catches most issues)\n  const TIMEZONE_PATTERNS = [\n    /^UTC$/,\n    /^[A-Z][a-z]+\\/[A-Z][a-z_]+$/,           // America/New_York\n    /^[A-Z][a-z]+\\/[A-Z][a-z]+_[A-Z][a-z]+$/, // America/Los_Angeles\n    /^[A-Z][a-z]+\\/[A-Z][a-z]+$/,             // Europe/London\n    /^Etc\\/[A-Z]+[+-]?\\d*$/                   // Etc/UTC, Etc/GMT+5\n  ];\n\n  // Known valid IANA timezones (subset for quick validation)\n  const COMMON_TIMEZONES = [\n    'UTC', 'GMT',\n    'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',\n    'America/Toronto', 'America/Vancouver', 'America/Mexico_City', 'America/Bogota',\n    'America/Lima', 'America/Santiago', 'America/Buenos_Aires', 'America/Sao_Paulo',\n    'America/Caracas', 'America/Panama', 'America/Puerto_Rico',\n    'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome',\n    'Europe/Amsterdam', 'Europe/Brussels', 'Europe/Zurich', 'Europe/Vienna',\n    'Europe/Warsaw', 'Europe/Prague', 'Europe/Stockholm', 'Europe/Oslo',\n    'Europe/Helsinki', 'Europe/Athens', 'Europe/Istanbul', 'Europe/Moscow',\n    'Asia/Dubai', 'Asia/Jerusalem', 'Asia/Riyadh', 'Asia/Tehran',\n    'Asia/Karachi', 'Asia/Kolkata', 'Asia/Mumbai', 'Asia/Dhaka',\n    'Asia/Bangkok', 'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Shanghai',\n    'Asia/Tokyo', 'Asia/Seoul', 'Asia/Manila', 'Asia/Jakarta',\n    'Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane',\n    'Australia/Perth', 'Pacific/Auckland', 'Pacific/Fiji',\n    'Africa/Cairo', 'Africa/Johannesburg', 'Africa/Lagos', 'Africa/Nairobi'\n  ];\n\n  // === Default Values ===\n  const DEFAULTS = {\n    timezone: 'UTC',\n    booking_window_days: 14,\n    min_advance_hours: 2,\n    max_slots_per_query: 1000\n  };\n\n  // === Limits ===\n  const LIMITS = {\n    booking_window_days: { min: 1, max: 90 },\n    min_advance_hours: { min: 0, max: 168 },  // 0 to 1 week\n    max_slots_per_query: { min: 10, max: 10000 }\n  };\n\n  // === Helper: Validate timezone ===\n  function isValidTimezone(tz) {\n    if (!tz || typeof tz !== 'string') return false;\n    \n    // Check against common timezones first\n    if (COMMON_TIMEZONES.includes(tz)) return true;\n    \n    // Check pattern match\n    if (TIMEZONE_PATTERNS.some(pattern => pattern.test(tz))) {\n      // Try to actually use the timezone\n      try {\n        new Date().toLocaleString('en-US', { timeZone: tz });\n        return true;\n      } catch (e) {\n        return false;\n      }\n    }\n    \n    return false;\n  }\n\n  // === Helper: Validate and normalize number ===\n  function validateNumber(value, name, limits, defaultValue) {\n    if (value === undefined || value === null || value === '') {\n      return { value: defaultValue, isDefault: true };\n    }\n    \n    const num = typeof value === 'string' ? parseInt(value, 10) : value;\n    \n    if (typeof num !== 'number' || isNaN(num)) {\n      errors.push(`${name} must be a number`);\n      return { value: defaultValue, isDefault: true, error: true };\n    }\n    \n    if (num < limits.min || num > limits.max) {\n      errors.push(`${name} must be between ${limits.min} and ${limits.max}`);\n      return { value: defaultValue, isDefault: true, error: true };\n    }\n    \n    return { value: num, isDefault: false };\n  }\n\n  // === Validate provider_id (for context only) ===\n  let providerId = input.provider_id || null;\n  if (providerId && !UUID_V4_REGEX.test(providerId)) {\n    warnings.push('provider_id is not a valid UUID (non-blocking)');\n    providerId = null;\n  }\n\n  // === Validate timezone ===\n  let timezone = input.timezone;\n  let isDefaultTimezone = false;\n  \n  if (!timezone || timezone === '') {\n    timezone = DEFAULTS.timezone;\n    isDefaultTimezone = true;\n  } else if (!isValidTimezone(timezone)) {\n    errors.push(`timezone '${timezone}' is not a valid IANA timezone`);\n  }\n\n  // === Validate booking_window_days ===\n  const windowResult = validateNumber(\n    input.booking_window_days,\n    'booking_window_days',\n    LIMITS.booking_window_days,\n    DEFAULTS.booking_window_days\n  );\n\n  // === Validate min_advance_hours ===\n  const advanceResult = validateNumber(\n    input.min_advance_hours,\n    'min_advance_hours',\n    LIMITS.min_advance_hours,\n    DEFAULTS.min_advance_hours\n  );\n\n  // === Validate max_slots_per_query ===\n  const maxSlotsResult = validateNumber(\n    input.max_slots_per_query,\n    'max_slots_per_query',\n    LIMITS.max_slots_per_query,\n    DEFAULTS.max_slots_per_query\n  );\n\n  // === Validate schedules if present ===\n  const schedules = input.schedules;\n  let schedulesValid = true;\n  \n  if (schedules !== undefined) {\n    if (!Array.isArray(schedules)) {\n      errors.push('schedules must be an array');\n      schedulesValid = false;\n    } else if (schedules.length > 0) {\n      // Validate schedule structure\n      const validDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n      const timeRegex = /^([01]\\d|2[0-3]):([0-5]\\d)(:[0-5]\\d)?$/;\n      \n      schedules.forEach((s, idx) => {\n        if (!s.day_of_week || !validDays.includes(s.day_of_week)) {\n          warnings.push(`schedules[${idx}].day_of_week is invalid`);\n        }\n        if (!s.start_time || !timeRegex.test(s.start_time)) {\n          warnings.push(`schedules[${idx}].start_time format is invalid`);\n        }\n        if (!s.end_time || !timeRegex.test(s.end_time)) {\n          warnings.push(`schedules[${idx}].end_time format is invalid`);\n        }\n      });\n    }\n  }\n\n  // === Return error if validation failed ===\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'INVALID_CONFIG',\n        error_message: errors.join('; '),\n        validated_config: null,\n        warnings: warnings.length > 0 ? warnings : undefined\n      }\n    }];\n  }\n\n  // === Return validated config ===\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      validated_config: {\n        timezone: timezone,\n        booking_window_days: windowResult.value,\n        min_advance_hours: advanceResult.value,\n        max_slots_per_query: maxSlotsResult.value,\n        // Metadata about defaults\n        is_default_timezone: isDefaultTimezone,\n        is_default_window: windowResult.isDefault,\n        is_default_advance: advanceResult.isDefault,\n        is_default_max_slots: maxSlotsResult.isDefault\n      },\n      warnings: warnings.length > 0 ? warnings : undefined,\n      _guard_passed: true\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'GUARD_ERROR',\n      error_message: 'Config validation error: ' + e.message,\n      validated_config: null\n    }\n  }];\n}"
-      },
-      "id": "paranoid-guard-06",
-      "name": "Paranoid Guard",
+      "id": "guard",
+      "name": "Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 260]
+      "position": [
+        200,
+        400
+      ]
     },
     {
       "parameters": {
+        "mode": "rules",
         "rules": {
           "values": [
             {
+              "outputKey": "error",
               "conditions": {
-                "options": { "caseSensitive": true, "version": 3 },
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
                 "conditions": [
-                  { 
-                    "id": "guard-failed", 
-                    "leftValue": "={{ $json.success }}", 
-                    "operator": { "type": "boolean", "operation": "false" }
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
                   }
                 ],
                 "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Validation Failed"
+              }
             }
           ]
         },
-        "options": { "fallbackOutput": "extra" }
-      },
-      "id": "switch-guard-06",
-      "name": "Switch: Valid?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [660, 260]
-    },
-    {
-      "parameters": {
-        "jsCode": "/**\n * APPLY CONFIG RULES\n * \n * Additional business logic validation and transformations.\n * This node handles cross-field validations and computed values.\n */\ntry {\n  const input = $input.item.json;\n  const config = input.validated_config;\n\n  // === Cross-field validations ===\n  const warnings = input.warnings || [];\n\n  // Check if booking window is reasonable given max_slots\n  // Assuming ~16 slots per day (8 hours / 30 min slots)\n  const estimatedSlotsPerDay = 16;\n  const estimatedTotalSlots = config.booking_window_days * estimatedSlotsPerDay;\n  \n  if (estimatedTotalSlots > config.max_slots_per_query * 0.8) {\n    warnings.push(\n      `booking_window_days (${config.booking_window_days}) may generate more slots than max_slots_per_query (${config.max_slots_per_query})`\n    );\n  }\n\n  // Check min_advance_hours vs booking_window\n  const advanceHoursInDays = config.min_advance_hours / 24;\n  if (advanceHoursInDays >= config.booking_window_days) {\n    warnings.push(\n      `min_advance_hours (${config.min_advance_hours}h = ${advanceHoursInDays.toFixed(1)}d) exceeds booking_window_days (${config.booking_window_days}d)`\n    );\n  }\n\n  // === Compute additional metadata ===\n  const now = new Date();\n  let tzOffsetInfo = null;\n  \n  try {\n    const localString = now.toLocaleString('en-US', { timeZone: config.timezone });\n    const localDate = new Date(localString);\n    const offsetMinutes = (now.getTime() - localDate.getTime()) / (1000 * 60);\n    const offsetHours = Math.round(offsetMinutes / 60);\n    tzOffsetInfo = {\n      offset_hours: offsetHours,\n      offset_string: `UTC${offsetHours >= 0 ? '+' : ''}${offsetHours}`,\n      current_time_in_tz: localDate.toISOString().replace('T', ' ').substring(0, 19)\n    };\n  } catch (e) {\n    // Timezone offset calculation failed, non-blocking\n    tzOffsetInfo = { error: 'Could not calculate timezone offset' };\n  }\n\n  // === Return enriched config ===\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      validated_config: {\n        ...config,\n        timezone_info: tzOffsetInfo\n      },\n      warnings: warnings.length > 0 ? warnings : undefined,\n      validation_timestamp: now.toISOString()\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'CONFIG_RULES_ERROR',\n      error_message: 'Error applying config rules: ' + e.message,\n      validated_config: null\n    }\n  }];\n}"
-      },
-      "id": "apply-rules-06",
-      "name": "Apply Config Rules",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [880, 340]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "is-webhook",
-              "leftValue": "={{ $('Webhook Test').isExecuted }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-webhook-06",
-      "name": "IF: From Webhook?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [1100, 260]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
         "options": {
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "X-Workflow",
-                "value": "BB_03_06_ValidateConfig"
-              }
-            ]
-          }
+          "fallbackOutput": "extra"
         }
       },
-      "id": "respond-webhook-06",
-      "name": "Respond Webhook",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1320, 160]
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "valid",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_06_ValidateConfig';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'VAL_INVALID_CONFIG', error_message: 'Invalid configuration', data: null, _meta: meta() } }];"
+      },
+      "id": "error",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_06_ValidateConfig';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        200
+      ]
     },
     {
       "parameters": {},
-      "id": "output-06",
+      "id": "output",
       "name": "Output",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1320, 360]
+      "position": [
+        1000,
+        300
+      ]
     }
   ],
   "connections": {
-    "Webhook Test": {
-      "main": [[{"node": "Merge Entry", "type": "main", "index": 0}]]
-    },
-    "Start": {
-      "main": [[{"node": "Merge Entry", "type": "main", "index": 1}]]
-    },
-    "Merge Entry": {
-      "main": [[{"node": "Paranoid Guard", "type": "main", "index": 0}]]
-    },
-    "Paranoid Guard": {
-      "main": [[{"node": "Switch: Valid?", "type": "main", "index": 0}]]
-    },
-    "Switch: Valid?": {
+    "\ud83e\uddea Test Webhook": {
       "main": [
-        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
-        [{"node": "Apply Config Rules", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Apply Config Rules": {
-      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
-    },
-    "IF: From Webhook?": {
+    "Start": {
       "main": [
-        [{"node": "Respond Webhook", "type": "main", "index": 0}],
-        [{"node": "Output", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Guard OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "errorWorkflow": "_Za9GzqB2cS9HVwBglt43",
-    "callerPolicy": "workflowsFromSameOwner"
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }

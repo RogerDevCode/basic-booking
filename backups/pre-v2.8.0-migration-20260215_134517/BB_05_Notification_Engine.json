@@ -1,0 +1,424 @@
+{
+  "name": "BB_05_Notification_Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "sub",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "notify-batch",
+        "responseMode": "responseNode"
+      },
+      "id": "web",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH config_json AS (\n    SELECT public.get_tenant_config_json('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') as data\n),\nconfig AS (\n    SELECT         (data->>'reminder_1_hours')::int * INTERVAL '1 hour' as r1_delta,\n        (data->>'reminder_2_hours')::int * INTERVAL '1 hour' as r2_delta,\n        (data->>'is_active')::boolean as is_active,\n        (data->>'TIMEZONE') as timezone\n    FROM config_json\n)\nSELECT b.id as booking_id, u.telegram_id, u.first_name, b.start_time, p.name as pro_name, c.timezone,\n    CASE         WHEN b.reminder_1_sent_at IS NULL AND b.start_time <= (NOW() + c.r1_delta) AND b.start_time > (NOW() + c.r2_delta) THEN 'r1'\n        WHEN b.reminder_2_sent_at IS NULL AND b.start_time <= (NOW() + c.r2_delta) THEN 'r2'\n    END as r_type\nFROM bookings b\nJOIN users u ON b.user_id = u.id\nJOIN professionals p ON b.professional_id = p.id\nCROSS JOIN config c\nWHERE c.is_active = TRUE AND b.status = 'confirmed' AND b.start_time > NOW()\nAND ((b.reminder_1_sent_at IS NULL AND b.start_time <= (NOW() + c.r1_delta))\n     OR (b.reminder_2_sent_at IS NULL AND b.start_time <= (NOW() + c.r2_delta)))\nLIMIT 50;\n"
+      },
+      "id": "db_f",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        250,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\nif (!items || items.length === 0) return [];\n\nconst validItems = items.filter(item => {\n    const i = item.json;\n    return i.booking_id && typeof i.booking_id === 'string' &&\n           i.telegram_id && \n           i.start_time;\n});\n\nreturn validItems.map(item => {\n    const i = item.json;\n    const dateObj = new Date(i.start_time);\n    const tz = i.timezone || 'America/Santiago';\n    let msg = \"\";\n    if (i.r_type === 'r1') {\n        const dateStr = dateObj.toLocaleString('es-CL', { timeZone: tz });\n        msg = \"REMINDER 24h: Hola \" + i.first_name + \", tu cita con \" + i.pro_name + \" es manana a las \" + dateStr;\n    } else {\n        const timeStr = dateObj.toLocaleTimeString('es-CL', { timeZone: tz, hour: '2-digit', minute: '2-digit' });\n        msg = \"REMINDER 2h: Tu cita con \" + i.pro_name + \" es pronto, a las \" + timeStr;\n    }\n    return { json: { ...i, text: msg } };\n});"
+      },
+      "id": "prep",
+      "name": "Prep Universal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        450,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "tg",
+      "name": "Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        650,
+        200
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "KGOR7voFnGIJfn1U",
+          "name": "Telegram Bot AutoAgenda"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "r1",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-r1",
+                    "leftValue": "={{ $node['Prep Universal'].json.r_type }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "r1"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "r2",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-r2",
+                    "leftValue": "={{ $node['Prep Universal'].json.r_type }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "r2"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "sw",
+      "name": "Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "value": "public",
+          "mode": "name"
+        },
+        "table": {
+          "value": "bookings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "reminder_1_sent_at": "={{ new Date().toISOString() }}"
+          }
+        },
+        "whereClause": {
+          "values": [
+            {
+              "column": "id",
+              "operator": "equal",
+              "value": "={{ $node['Prep Universal'].json.booking_id }}"
+            }
+          ]
+        }
+      },
+      "id": "up1",
+      "name": "Mark R1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1050,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "value": "public",
+          "mode": "name"
+        },
+        "table": {
+          "value": "bookings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "reminder_2_sent_at": "={{ new Date().toISOString() }}"
+          }
+        },
+        "whereClause": {
+          "values": [
+            {
+              "column": "id",
+              "operator": "equal",
+              "value": "={{ $node['Prep Universal'].json.booking_id }}"
+            }
+          ]
+        }
+      },
+      "id": "up2",
+      "name": "Mark R2",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1050,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "aa8wMkQBBzGHkJzn",
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { status: 'success', processed: $node['Prep Universal'].all().length } }];"
+      },
+      "id": "done",
+      "name": "Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\ntry {\n    const logEntry = {\n      timestamp: new Date().toISOString(),\n      itemsCount: items.length,\n      preview: JSON.stringify(items[0]?.json).slice(0, 200)\n    };\n    console.log('[WF-OUTPUT]', JSON.stringify(logEntry));\n} catch(e) {}return items;"
+      },
+      "id": "log_out",
+      "name": "Log Output (Respond)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "res",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch": {
+      "main": [
+        [
+          {
+            "node": "Prep Universal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Universal": {
+      "main": [
+        [
+          {
+            "node": "Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram": {
+      "main": [
+        [
+          {
+            "node": "Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router": {
+      "main": [
+        [
+          {
+            "node": "Mark R1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark R1": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark R2": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Done": {
+      "main": [
+        [
+          {
+            "node": "Log Output (Respond)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Output (Respond)": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

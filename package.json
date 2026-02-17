@@ -19,8 +19,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "n8n": "^1.123.18",
-    "supergateway": "^1.5.0"
+    "@kilocode/cli": "^1.0.22",
+    "n8n": "^2.7.5",
+    "supergateway": "^3.4.3"
   },
   "devDependencies": {
     "jest": "^30.2.0"

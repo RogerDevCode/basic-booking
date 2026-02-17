@@ -9,7 +9,7 @@
         "options": {}
       },
       "id": "test_webhook",
-      "name": "🧪 Test Webhook",
+      "name": "\ud83e\uddea Test Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.booking_id || !isValidUUID(raw.booking_id)) errors.push('booking_id must be a valid UUID');\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be a valid UUID');\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok({\n    booking_id: raw.booking_id,\n    user_id: raw.user_id\n  });\n\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.booking_id || !isValidUUID(raw.booking_id)) errors.push('booking_id must be a valid UUID');\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be a valid UUID');\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok({\n    booking_id: raw.booking_id,\n    user_id: raw.user_id\n  });\n\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -120,7 +120,7 @@
     },
     {
       "parameters": {
-        "jsCode": "/**\n * Validate DB Result — Fetch Booking\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst DB_CONTEXT = 'fetch booking by id and user';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  if (!res.id) return fail('BOOK_NOT_FOUND', 'Booking not found or not cancelable');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} validate_fetch: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\n/**\n * Validate DB Result \u2014 Fetch Booking\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst DB_CONTEXT = 'fetch booking by id and user';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  if (!res.id) return fail('BOOK_NOT_FOUND', 'Booking not found or not cancelable');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} validate_fetch: ${e.message}`);\n}"
       },
       "id": "validate_fetch_result",
       "name": "Validate Fetch Result",
@@ -218,7 +218,7 @@
     },
     {
       "parameters": {
-        "jsCode": "/**\n * Validate DB Result — Update Status\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst DB_CONTEXT = 'update booking status to cancelled';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  if (!res.id) return fail('BOOK_UPDATE_FAILED', 'Failed to update booking status');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} validate_update: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\n/**\n * Validate DB Result \u2014 Update Status\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst DB_CONTEXT = 'update booking status to cancelled';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  if (!res.id) return fail('BOOK_UPDATE_FAILED', 'Failed to update booking status');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} validate_update: ${e.message}`);\n}"
       },
       "id": "validate_update_result",
       "name": "Validate Update Result",
@@ -262,7 +262,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const result = $input.first()?.json.data;\n  return ok({ booking_id: result.id, action: 'cancelled' });\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const result = $input.first()?.json.data;\n  return ok({ booking_id: result.id, action: 'cancelled' });\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "success",
       "name": "Success",
@@ -275,7 +275,7 @@
     },
     {
       "parameters": {
-        "jsCode": "/**\n * Format Output\n * v1.0\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n\ntry {\n  const input = $input.all();\n  if (!input || input.length === 0) {\n    return [{ json: { success: false, error_code: 'SYS_NO_OUTPUT', error_message: `${WORKFLOW_ID}: format output received no input`, data: null, _meta: meta() } }];\n  }\n\n  const incoming = input[0].json;\n\n  if ('success' in incoming && '_meta' in incoming) {\n    return [{ json: { ...incoming, _meta: { ...incoming._meta, timestamp: new Date().toISOString(), formatted_by: WORKFLOW_ID } } }];\n  }\n\n  return [{ json: { success: true, error_code: null, error_message: null, data: incoming, _meta: meta() } }];\n\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID} format: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\n/**\n * Format Output\n * v1.0\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n\ntry {\n  const input = $input.all();\n  if (!input || input.length === 0) {\n    return [{ json: { success: false, error_code: 'SYS_NO_OUTPUT', error_message: `${WORKFLOW_ID}: format output received no input`, data: null, _meta: meta() } }];\n  }\n\n  const incoming = input[0].json;\n\n  if ('success' in incoming && '_meta' in incoming) {\n    return [{ json: { ...incoming, _meta: { ...incoming._meta, timestamp: DateTime.utc().toISO(), formatted_by: WORKFLOW_ID } } }];\n  }\n\n  return [{ json: { success: true, error_code: null, error_message: null, data: incoming, _meta: meta() } }];\n\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID} format: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "format_output",
       "name": "Format Output",
@@ -288,7 +288,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Cancel';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
       },
       "id": "error-guard",
       "name": "Error",
@@ -301,7 +301,7 @@
     }
   ],
   "connections": {
-    "🧪 Test Webhook": {
+    "\ud83e\uddea Test Webhook": {
       "main": [
         [
           {

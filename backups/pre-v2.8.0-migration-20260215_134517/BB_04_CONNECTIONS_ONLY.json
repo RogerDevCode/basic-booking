@@ -1,0 +1,90 @@
+{
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{"node": "Guard", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [{"node": "Valid?", "type": "main", "index": 0}]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [{"node": "400 Bad Request", "type": "main", "index": 0}],
+        [{"node": "Get Config", "type": "main", "index": 0}]
+      ]
+    },
+    "400 Bad Request": {
+      "main": [
+        [{"node": "Call BB_00 Error Handler", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Config": {
+      "main": [
+        [{"node": "Validate Duration", "type": "main", "index": 0}]
+      ]
+    },
+    "Validate Duration": {
+      "main": [
+        [{"node": "Duration OK?", "type": "main", "index": 0}]
+      ]
+    },
+    "Duration OK?": {
+      "main": [
+        [{"node": "400 Bad Request", "type": "main", "index": 0}],
+        [{"node": "Validate Foreign Keys", "type": "main", "index": 0}]
+      ]
+    },
+    "Validate Foreign Keys": {
+      "main": [
+        [{"node": "FKs OK?", "type": "main", "index": 0}]
+      ]
+    },
+    "FKs OK?": {
+      "main": [
+        [{"node": "DB: Lock Slot", "type": "main", "index": 0}],
+        [{"node": "400 Bad Request", "type": "main", "index": 0}]
+      ]
+    },
+    "DB: Lock Slot": {
+      "main": [
+        [{"node": "Locked?", "type": "main", "index": 0}]
+      ]
+    },
+    "Locked?": {
+      "main": [
+        [{"node": "Respond Locked", "type": "main", "index": 0}],
+        [{"node": "GCal: Create", "type": "main", "index": 0}]
+      ]
+    },
+    "GCal: Create": {
+      "main": [
+        [{"node": "GCal OK?", "type": "main", "index": 0}]
+      ]
+    },
+    "GCal OK?": {
+      "main": [
+        [{"node": "DB: Insert", "type": "main", "index": 0}],
+        [{"node": "400 Bad Request", "type": "main", "index": 0}]
+      ]
+    },
+    "DB: Insert": {
+      "main": [
+        [{"node": "DB OK?", "type": "main", "index": 0}]
+      ]
+    },
+    "DB OK?": {
+      "main": [
+        [{"node": "Respond Success", "type": "main", "index": 0}],
+        [{"node": "GCal: Rollback", "type": "main", "index": 0}]
+      ]
+    },
+    "GCal: Rollback": {
+      "main": [
+        [{"node": "Respond Fail", "type": "main", "index": 0}]
+      ]
+    }
+  }
+}

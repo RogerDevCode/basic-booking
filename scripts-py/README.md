@@ -1,88 +1,123 @@
-# n8n Python Scripts - Refactored
+# N8N Python Scripts
 
-This directory contains refactored Python scripts for interacting with n8n workflows. The original redundant scripts have been consolidated into a more maintainable structure.
+Scripts CRUD para gestión de workflows en n8n v2.8.0+
 
-## Structure
+## Configuración
 
-### Core Modules
-
-- `n8n_crud_agent.py`: Central module containing the `N8NCrudAgent` class with all n8n workflow management functionality
-- `qwen_n8n_plugin.py`: Plugin interface for Qwen to interact with n8n through the agent
-- `utils.py`: Utility functions combining functionality from removed scripts
-
-### Demo and Test Scripts
-
-- `demo_crud.py`: Demonstrates all CRUD operations with n8n workflows
-- `qwen_n8n_integration_demo.py`: Shows how Qwen can use the plugin interface
-- `example_usage.py`: Basic example of using the CRUD agent
-- `test_n8n_crud_agent.py`: Comprehensive unit tests for the CRUD agent
-- `test_publish_unpublish.py`: Specific tests for publish/unpublish functionality
-
-## Key Improvements
-
-1. **Centralized Functionality**: All n8n interaction logic is now in `N8NCrudAgent`
-2. **Reduced Redundancy**: Removed duplicate functions across multiple files
-3. **Enhanced Capabilities**: Added execution and execution history functionality
-4. **Better Organization**: Clear separation between core functionality and utilities
-
-## Available Methods
-
-The `N8NCrudAgent` class provides the following methods:
-
-- `list_workflows()` - Get all workflows
-- `list_active_workflows()` - Get only active workflows
-- `get_workflow_by_id(id)` - Get specific workflow
-- `create_workflow(data)` - Create new workflow
-- `update_workflow(id, data)` - Update existing workflow
-- `delete_workflow(id)` - Delete workflow
-- `activate_workflow(id)` - Activate (publish) workflow
-- `deactivate_workflow(id)` - Deactivate (unpublish) workflow
-- `publish_workflow(id)` - Alias for activate
-- `unpublish_workflow(id)` - Alias for deactivate
-- `execute_workflow(id)` - Execute workflow manually
-- `get_executions(workflow_id, limit)` - Get workflow executions
-- `get_execution_by_id(id)` - Get specific execution
-
-## Usage Examples
-
-### Using the CRUD Agent Directly
-
-```python
-from n8n_crud_agent import N8NCrudAgent
-
-agent = N8NCrudAgent("https://n8n.stax.ink")
-workflows = agent.list_workflows()
+1. Copia `.env.example` a `.env`:
+```bash
+cp .env.example .env
 ```
 
-### Using the Qwen Plugin
-
-```python
-from qwen_n8n_plugin import qwen_n8n_plugin
-
-result = qwen_n8n_plugin("list_workflows")
+2. Configura tus credenciales:
+```env
+N8N_API_URL=http://localhost:5678
+N8N_API_KEY=your-api-key-here
 ```
 
-## API Key Configuration
+## Scripts Disponibles
 
-Scripts look for API keys in the following order:
+### CREATE
 
-1. Environment variables: `N8N_API_KEY` or `N8N_ACCESS_TOKEN`
-2. `.env` file in the scripts-py directory with `N8N_API_KEY` or `N8N_ACCESS_TOKEN`
+| Script | Descripción | Ejemplo |
+|--------|-------------|---------|
+| `n8n_create_from_file.py` | Crear workflow desde archivo JSON | `python n8n_create_from_file.py --file workflow.json --activate` |
 
-## Removed Scripts
+### READ
 
-The following redundant scripts have been removed as their functionality is now available in the centralized modules:
+| Script | Descripción | Ejemplo |
+|--------|-------------|---------|
+| `n8n_read_list.py` | Listar workflows | `python n8n_read_list.py --active` |
+| `n8n_read_get.py` | Obtener workflow por ID/nombre | `python n8n_read_get.py --name "BB_00"` |
+| `n8n_read_executions.py` | Ver historial de ejecuciones | `python n8n_read_executions.py --workflow ID` |
+| `n8n_read_export.py` | Exportar workflows a JSON | `python n8n_read_export.py --all --output-dir ./exports/` |
 
-- `activate_workflow.py`
-- `create_and_activate_workflow.py`
-- `execute_workflow.py`
-- `list_active_workflows.py`
-- `list_all_workflows.py`
-- `trigger_workflow.py`
-- `complete_report.py`
+### UPDATE
 
-All functionality from these scripts is now available through the `N8NCrudAgent` class or utility functions in `utils.py`.
+| Script | Descripción | Ejemplo |
+|--------|-------------|---------|
+| `n8n_update_from_file.py` | Actualizar workflow desde JSON | `python n8n_update_from_file.py --id ID --file workflow.json` |
+| `n8n_update_activate.py` | Activar workflow | `python n8n_update_activate.py --id ID` |
+| `n8n_update_deactivate.py` | Desactivar workflow | `python n8n_update_deactivate.py --id ID` |
 
-## Backups
+### DELETE
 
-Original scripts are preserved in the `backup/` directory for reference.
+| Script | Descripción | Ejemplo |
+|--------|-------------|---------|
+| `n8n_delete.py` | Eliminar workflow | `python n8n_delete.py --id ID` |
+
+## Ejemplos de Uso
+
+### Listar todos los workflows activos
+```bash
+python n8n_read_list.py --active --format table
+```
+
+### Filtrar workflows por nombre
+```bash
+python n8n_read_list.py --filter "BB_" --format json
+```
+
+### Exportar todos los workflows del proyecto
+```bash
+python n8n_read_export.py --filter "BB_" --output-dir ../workflows/
+```
+
+### Importar workflow desde archivo
+```bash
+python n8n_create_from_file.py --file ../workflows/BB_00_Global_Error_Handler.json --activate
+```
+
+### Activar múltiples workflows
+```bash
+python n8n_update_activate.py --filter "BB_" --all
+```
+
+### Ver ejecuciones recientes de un workflow
+```bash
+python n8n_read_executions.py --workflow ID --limit 20 --format table
+```
+
+### Ver detalles de ejecución fallida
+```bash
+python n8n_read_executions.py --execution EXEC_ID --format summary
+```
+
+## Opciones Comunes
+
+Todos los scripts aceptan:
+- `--url`: URL del servidor n8n (sobrescribe N8N_API_URL)
+- `--api-key`: API key (sobrescribe N8N_API_KEY)
+- `--format`: Formato de salida (json, table, summary, etc.)
+
+## Archivos
+
+```
+scripts-py/
+├── config.py                    # Configuración centralizada
+├── .env.example                 # Template de variables de entorno
+├── README.md                    # Este archivo
+│
+├── n8n_create_from_file.py      # CREATE: Crear workflow
+│
+├── n8n_read_list.py             # READ: Listar workflows
+├── n8n_read_get.py              # READ: Obtener workflow
+├── n8n_read_executions.py       # READ: Ver ejecuciones
+├── n8n_read_export.py           # READ: Exportar workflows
+│
+├── n8n_update_from_file.py      # UPDATE: Actualizar workflow
+├── n8n_update_activate.py       # UPDATE: Activar workflow
+├── n8n_update_deactivate.py     # UPDATE: Desactivar workflow
+│
+├── n8n_delete.py                # DELETE: Eliminar workflow
+│
+└── _old_backup/                 # Scripts antiguos (backup)
+```
+
+## Requisitos
+
+```bash
+pip install requests
+```
+
+Python 3.8+

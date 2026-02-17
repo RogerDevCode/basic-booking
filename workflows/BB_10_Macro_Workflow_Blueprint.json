@@ -1,0 +1,538 @@
+{
+  "name": "BB_10_Macro_Workflow_Blueprint",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "macro-entry",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "\ud83e\uddea Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "macro-entry-test"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_10_Macro_Workflow_Blueprint';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+      },
+      "id": "guard",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "acjwJV3G2k31wO0a",
+        "options": {}
+      },
+      "id": "exec-security",
+      "name": "\u2192 BB_02 Security",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-success",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-security",
+      "name": "Security OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "qhy8QQ0gd9XZeDUV",
+        "options": {}
+      },
+      "id": "exec-availability",
+      "name": "\u2192 BB_03 Availability",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-success",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-availability",
+      "name": "Availability OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "FY0Y1vZj7BEa9zgY",
+        "options": {}
+      },
+      "id": "exec-booking",
+      "name": "\u2192 BB_04 Booking",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-success",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-booking",
+      "name": "Booking OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "tSMiMqwuUldqic5K",
+        "options": {}
+      },
+      "id": "exec-admin",
+      "name": "\u2192 BB_06 Admin",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-success",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-admin",
+      "name": "Admin OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        2000,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_10_Macro_Workflow_Blueprint';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        50
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_10_Macro_Workflow_Blueprint';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'ORCH_SUBWF_FAILED', error_message: 'Subworkflow execution failed', data: null, _meta: meta() } }];"
+      },
+      "id": "error",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "\ud83e\uddea Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Guard OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "\u2192 BB_02 Security",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u2192 BB_02 Security": {
+      "main": [
+        [
+          {
+            "node": "Security OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Security OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "\u2192 BB_03 Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u2192 BB_03 Availability": {
+      "main": [
+        [
+          {
+            "node": "Availability OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Availability OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "\u2192 BB_04 Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u2192 BB_04 Booking": {
+      "main": [
+        [
+          {
+            "node": "Booking OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "\u2192 BB_06 Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u2192 BB_06 Admin": {
+      "main": [
+        [
+          {
+            "node": "Admin OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Admin OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
+  }
+}

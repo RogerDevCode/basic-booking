@@ -1,0 +1,473 @@
+{
+  "name": "BB_01_Telegram_Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-webhook",
+        "responseMode": "responseNode"
+      },
+      "id": "web",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = items[0].json; const body = input.body; if (!body) return [{ json: { error: true } }]; const message = body.message || body.channel_post; const chatId = message?.chat?.id; const text = message?.text || ''; if (!chatId) return [{ json: { error: true } }]; return [{ json: { chatId, text, firstName: message?.from?.first_name || 'User' } }];"
+      },
+      "id": "guard",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst text = $json.text;\nlet action = \"unknown\";\nlet slug = null;\n\nif (text.startsWith(\"/start \") && text.length > 7) {\n    action = \"set_context\";\n    slug = text.replace(\"/start \", \"\").trim();\n} else if (text.startsWith(\"/book\")) {\n    action = \"book\";\n} else if (text.startsWith(\"/list\")) {\n    action = \"list\";\n} else if (text.startsWith(\"/help\")) {\n    action = \"help\";\n}\n\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst dateStr = tomorrow.toISOString().split('T')[0];\n\nreturn [{ json: { ...$json, action, slug, target_date: dateStr } }];\n"
+      },
+      "id": "analyze",
+      "name": "Analyze Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "set_context",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-action",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "set_context"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "book",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-action",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "book"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "list",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-action",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "value": "list"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 1
+        }
+      },
+      "id": "router",
+      "name": "Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH res AS (SELECT id, name FROM public.providers WHERE slug = $2) UPDATE public.users SET last_selected_provider_id = res.id FROM res WHERE telegram_id = $1 RETURNING res.name as provider_name;",
+        "queryParameters": {
+          "values": [
+            {
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "value": "={{ $json.slug }}"
+            }
+          ]
+        }
+      },
+      "id": "db_set",
+      "name": "DB: Set Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        850,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'success', message: '✅ Seleccionado: ' + ($json.provider_name || 'Desconocido') } }}"
+      },
+      "id": "resp_set",
+      "name": "Respond Set",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.last_selected_provider_id, r.name as provider_name FROM public.users u LEFT JOIN public.providers r ON u.last_selected_provider_id = r.id WHERE u.telegram_id = $1;",
+        "queryParameters": {
+          "values": [
+            {
+              "value": "={{ $json.chatId }}"
+            }
+          ]
+        }
+      },
+      "id": "db_get",
+      "name": "DB: Get Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        850,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "has_ctx",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-ctx",
+                    "leftValue": "={{ !!$json.last_selected_provider_id }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 1
+        }
+      },
+      "id": "check_ctx",
+      "name": "Has Resource?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: true, message: '⚠️ Primero selecciona un recurso con /list' } }}"
+      },
+      "id": "resp_no_ctx",
+      "name": "Respond No Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1350,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "BB_03_Availability_Engine",
+          "mode": "list",
+          "cachedResultName": "BB_03_Availability_Engine"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "provider_id": "={{ $json.last_selected_provider_id }}",
+            "date": "={{ $node['Analyze Intent'].json.target_date }}"
+          }
+        }
+      },
+      "id": "exec_avail",
+      "name": "Call 'BB_03'",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1350,
+        50
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { result: 'Disponibilidad para ' + $node['DB: Get Context'].json.provider_name, slots: $json.slots } }}"
+      },
+      "id": "resp_slots",
+      "name": "Respond Slots",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        50
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, slug FROM public.providers WHERE deleted_at IS NULL;"
+      },
+      "id": "db_list",
+      "name": "DB: List Resources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        850,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres Neon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all(); const list = items.map(i => `• ${i.json.name}: /start ${i.json.slug}`).join('\n'); return [{ json: { message: '📋 Recursos disponibles:\n' + list } }];"
+      },
+      "id": "fmt_list",
+      "name": "Format List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "resp_list",
+      "name": "Respond List",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1350,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Analyze Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Intent": {
+      "main": [
+        [
+          {
+            "node": "Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router": {
+      "main": [
+        [
+          {
+            "node": "DB: Set Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB: Get Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB: List Resources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Set Context": {
+      "main": [
+        [
+          {
+            "node": "Respond Set",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Context": {
+      "main": [
+        [
+          {
+            "node": "Has Resource?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Resource?": {
+      "main": [
+        [
+          {
+            "node": "Call 'BB_03'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'BB_03'": {
+      "main": [
+        [
+          {
+            "node": "Respond Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: List Resources": {
+      "main": [
+        [
+          {
+            "node": "Format List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format List": {
+      "main": [
+        [
+          {
+            "node": "Respond List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

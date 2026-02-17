@@ -1,0 +1,182 @@
+{
+  "name": "BB_03_05_CalculateSlots",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bb03-calculate-slots",
+        "options": {}
+      },
+      "id": "webhook-test-05",
+      "name": "Webhook Test",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 160],
+      "webhookId": "bb03-calculate-slots"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger-05",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 360]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-entry-05",
+      "name": "Merge Entry",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [220, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * PARANOID GUARD: Calculate Slots Input Validation\n * \n * Validates all required fields for slot calculation with strict type checking.\n * \n * Required Input:\n * - provider_id: UUID v4\n * - provider_name: string\n * - provider_slug: string  \n * - slot_duration_mins: number (5-480)\n * - timezone: string (IANA format)\n * - min_advance_hours: number (0-168)\n * - max_slots: number (1-10000)\n * - schedules: array of {day_of_week, start_time, end_time}\n * - date_range: {from: YYYY-MM-DD, to: YYYY-MM-DD, total_days: number}\n * - bookings: array (can be empty)\n * \n * Output: {success, error_code, error_message, data}\n */\ntry {\n  const input = $input.item.json;\n  const errors = [];\n\n  // Regex patterns\n  const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n  const DATE_REGEX = /^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$/;\n  const TIME_REGEX = /^([01]\\d|2[0-3]):([0-5]\\d)(:[0-5]\\d)?$/;\n  const TIMEZONE_REGEX = /^[A-Za-z_]+\\/[A-Za-z_]+$/; // Basic IANA format check\n\n  // Valid day names (PostgreSQL enum)\n  const VALID_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n\n  // === PROVIDER_ID: Required, UUID v4 ===\n  if (!input.provider_id) {\n    errors.push('provider_id is required');\n  } else if (typeof input.provider_id !== 'string' || !UUID_V4_REGEX.test(input.provider_id)) {\n    errors.push('provider_id must be a valid UUID v4');\n  }\n\n  // === PROVIDER_NAME: Required, string ===\n  if (!input.provider_name || typeof input.provider_name !== 'string') {\n    errors.push('provider_name is required and must be a string');\n  }\n\n  // === PROVIDER_SLUG: Required, string ===\n  if (!input.provider_slug || typeof input.provider_slug !== 'string') {\n    errors.push('provider_slug is required and must be a string');\n  }\n\n  // === SLOT_DURATION_MINS: Required, number 5-480 ===\n  const slotDuration = input.slot_duration_mins;\n  if (slotDuration === undefined || slotDuration === null) {\n    errors.push('slot_duration_mins is required');\n  } else if (typeof slotDuration !== 'number' || !Number.isInteger(slotDuration)) {\n    errors.push('slot_duration_mins must be an integer');\n  } else if (slotDuration < 5 || slotDuration > 480) {\n    errors.push('slot_duration_mins must be between 5 and 480 minutes');\n  }\n\n  // === TIMEZONE: Required, IANA format ===\n  if (!input.timezone) {\n    errors.push('timezone is required');\n  } else if (typeof input.timezone !== 'string') {\n    errors.push('timezone must be a string');\n  } else if (!TIMEZONE_REGEX.test(input.timezone) && input.timezone !== 'UTC') {\n    errors.push('timezone must be in IANA format (e.g., America/New_York) or UTC');\n  }\n\n  // === MIN_ADVANCE_HOURS: Required, number 0-168 ===\n  const minAdvance = input.min_advance_hours;\n  if (minAdvance === undefined || minAdvance === null) {\n    errors.push('min_advance_hours is required');\n  } else if (typeof minAdvance !== 'number') {\n    errors.push('min_advance_hours must be a number');\n  } else if (minAdvance < 0 || minAdvance > 168) {\n    errors.push('min_advance_hours must be between 0 and 168 (1 week)');\n  }\n\n  // === MAX_SLOTS: Required, number 1-10000 ===\n  const maxSlots = input.max_slots;\n  if (maxSlots === undefined || maxSlots === null) {\n    errors.push('max_slots is required');\n  } else if (typeof maxSlots !== 'number' || !Number.isInteger(maxSlots)) {\n    errors.push('max_slots must be an integer');\n  } else if (maxSlots < 1 || maxSlots > 10000) {\n    errors.push('max_slots must be between 1 and 10000');\n  }\n\n  // === SCHEDULES: Required, non-empty array ===\n  const schedules = input.schedules;\n  if (!Array.isArray(schedules)) {\n    errors.push('schedules must be an array');\n  } else if (schedules.length === 0) {\n    errors.push('schedules cannot be empty');\n  } else {\n    // Validate each schedule entry\n    schedules.forEach((s, idx) => {\n      if (!s.day_of_week || !VALID_DAYS.includes(s.day_of_week)) {\n        errors.push(`schedules[${idx}].day_of_week must be one of: ${VALID_DAYS.join(', ')}`);\n      }\n      if (!s.start_time || !TIME_REGEX.test(s.start_time)) {\n        errors.push(`schedules[${idx}].start_time must be HH:MM or HH:MM:SS format`);\n      }\n      if (!s.end_time || !TIME_REGEX.test(s.end_time)) {\n        errors.push(`schedules[${idx}].end_time must be HH:MM or HH:MM:SS format`);\n      }\n      // Validate start < end\n      if (s.start_time && s.end_time && s.start_time >= s.end_time) {\n        errors.push(`schedules[${idx}]: start_time must be before end_time`);\n      }\n    });\n  }\n\n  // === DATE_RANGE: Required object with from, to, total_days ===\n  const dateRange = input.date_range;\n  if (!dateRange || typeof dateRange !== 'object') {\n    errors.push('date_range is required and must be an object');\n  } else {\n    if (!dateRange.from || !DATE_REGEX.test(dateRange.from)) {\n      errors.push('date_range.from must be YYYY-MM-DD format');\n    }\n    if (!dateRange.to || !DATE_REGEX.test(dateRange.to)) {\n      errors.push('date_range.to must be YYYY-MM-DD format');\n    }\n    if (!dateRange.total_days || typeof dateRange.total_days !== 'number' || dateRange.total_days < 1 || dateRange.total_days > 31) {\n      errors.push('date_range.total_days must be a number between 1 and 31');\n    }\n    // Validate from <= to\n    if (dateRange.from && dateRange.to && dateRange.from > dateRange.to) {\n      errors.push('date_range.from must be before or equal to date_range.to');\n    }\n  }\n\n  // === BOOKINGS: Required array (can be empty) ===\n  const bookings = input.bookings;\n  if (!Array.isArray(bookings)) {\n    errors.push('bookings must be an array (can be empty)');\n  } else {\n    // Validate booking entries if present\n    bookings.forEach((b, idx) => {\n      if (b.start_time && isNaN(Date.parse(b.start_time))) {\n        errors.push(`bookings[${idx}].start_time is not a valid date`);\n      }\n      if (b.end_time && isNaN(Date.parse(b.end_time))) {\n        errors.push(`bookings[${idx}].end_time is not a valid date`);\n      }\n    });\n  }\n\n  // === Return validation result ===\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'VALIDATION_FAILED',\n        error_message: errors.slice(0, 10).join('; ') + (errors.length > 10 ? ` (+${errors.length - 10} more errors)` : ''),\n        data: null\n      }\n    }];\n  }\n\n  // Pass validated data\n  return [{\n    json: {\n      ...input,\n      _guard_passed: true\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'GUARD_ERROR',\n      error_message: 'Paranoid Guard internal error: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "paranoid-guard-05",
+      "name": "Paranoid Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 260]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "version": 3 },
+                "conditions": [
+                  { 
+                    "id": "guard-failed", 
+                    "leftValue": "={{ $json._guard_passed }}", 
+                    "operator": { "type": "boolean", "operation": "notEquals", "rightValue": true }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Guard Failed"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-guard-05",
+      "name": "Switch: Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [660, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * CALCULATE SLOTS\n * \n * Core algorithm for generating available time slots.\n * \n * Features:\n * - Timezone-aware date/time calculations\n * - Interval merging for overlapping schedules\n * - Booking conflict detection\n * - Past slot detection with min_advance_hours\n * - Configurable max_slots limit\n * \n * Output Structure:\n * {\n *   success: true,\n *   error_code: null,\n *   error_message: null,\n *   data: {\n *     provider_id, provider_name, provider_slug,\n *     slot_duration_mins, timezone, date_range,\n *     dates: [{ date, day_name, slots, available_count, total_count }],\n *     summary: { total_available, total_booked, total_past, days_with_availability }\n *   }\n * }\n */\ntry {\n  const {\n    provider_id,\n    provider_name,\n    provider_slug,\n    slot_duration_mins,\n    timezone,\n    min_advance_hours,\n    max_slots,\n    schedules,\n    date_range,\n    bookings,\n    service_id\n  } = $input.item.json;\n\n  // === Constants ===\n  const DAY_MAP = {\n    'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,\n    'Thursday': 4, 'Friday': 5, 'Saturday': 6\n  };\n  const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n  const MAX_SLOTS_LIMIT = max_slots || 1000;\n  const SLOTS_PER_DAY_LIMIT = 200; // Safety limit per day\n\n  // === Helper: Get timezone offset in minutes ===\n  // Note: This is a simplified approach. For production, consider using luxon.\n  function getTimezoneOffsetMinutes(tz, date) {\n    try {\n      const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));\n      const tzDate = new Date(date.toLocaleString('en-US', { timeZone: tz }));\n      return (utcDate - tzDate) / (1000 * 60);\n    } catch (e) {\n      // Fallback to UTC if timezone is invalid\n      return 0;\n    }\n  }\n\n  // === Helper: Get current time in provider's timezone ===\n  function getNowInTimezone(tz) {\n    const now = new Date();\n    try {\n      const tzString = now.toLocaleString('en-US', { timeZone: tz });\n      return new Date(tzString);\n    } catch (e) {\n      return now; // Fallback to server time\n    }\n  }\n\n  // === Helper: Parse time string to minutes since midnight ===\n  function timeToMinutes(timeStr) {\n    const [h, m] = timeStr.split(':').map(Number);\n    return h * 60 + m;\n  }\n\n  // === Helper: Minutes to HH:MM string ===\n  function minutesToTime(mins) {\n    const h = Math.floor(mins / 60);\n    const m = mins % 60;\n    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;\n  }\n\n  // === Helper: Merge overlapping schedule intervals ===\n  function mergeIntervals(intervals) {\n    if (!intervals.length) return [];\n    \n    const parsed = intervals\n      .map(i => ({\n        start: timeToMinutes(i.start_time || i.startTime),\n        end: timeToMinutes(i.end_time || i.endTime)\n      }))\n      .filter(i => i.start < i.end) // Filter invalid intervals\n      .sort((a, b) => a.start - b.start);\n\n    if (!parsed.length) return [];\n\n    const merged = [parsed[0]];\n    for (let i = 1; i < parsed.length; i++) {\n      const last = merged[merged.length - 1];\n      const current = parsed[i];\n      \n      if (current.start <= last.end) {\n        last.end = Math.max(last.end, current.end);\n      } else {\n        merged.push(current);\n      }\n    }\n\n    return merged.map(i => ({\n      startTime: minutesToTime(i.start),\n      endTime: minutesToTime(i.end),\n      startMins: i.start,\n      endMins: i.end\n    }));\n  }\n\n  // === Helper: Check if slot overlaps with any booking ===\n  function isSlotBooked(slotStartMs, slotEndMs, bookedRanges) {\n    return bookedRanges.some(b => slotStartMs < b.end && slotEndMs > b.start);\n  }\n\n  // === Index schedules by day of week ===\n  const scheduleByDay = {};\n  for (const s of schedules) {\n    const dayNum = DAY_MAP[s.day_of_week];\n    if (dayNum !== undefined) {\n      if (!scheduleByDay[dayNum]) scheduleByDay[dayNum] = [];\n      scheduleByDay[dayNum].push(s);\n    }\n    // Silently ignore unknown day_of_week (already validated in Paranoid Guard)\n  }\n\n  // Merge overlapping intervals for each day\n  for (const dayKey of Object.keys(scheduleByDay)) {\n    scheduleByDay[dayKey] = mergeIntervals(scheduleByDay[dayKey]);\n  }\n\n  // === Parse bookings to comparable ranges ===\n  const bookedRanges = bookings\n    .filter(b => b.start_time && b.end_time)\n    .map(b => ({\n      start: new Date(b.start_time).getTime(),\n      end: new Date(b.end_time).getTime()\n    }))\n    .filter(b => !isNaN(b.start) && !isNaN(b.end));\n\n  // === Calculate \"now\" in provider's timezone ===\n  const nowInTz = getNowInTimezone(timezone);\n  const nowMs = nowInTz.getTime();\n  const minAdvanceMs = min_advance_hours * 60 * 60 * 1000;\n  const earliestBookableMs = nowMs + minAdvanceMs;\n\n  // === Generate slots for each day in range ===\n  const dates = [];\n  let totalAvailable = 0;\n  let totalBooked = 0;\n  let totalPast = 0;\n  let totalSlotsCalculated = 0;\n\n  const startDate = new Date(date_range.from + 'T12:00:00Z'); // Use noon UTC to avoid DST issues\n  const totalDays = Math.min(date_range.total_days, 31); // Safety cap\n\n  for (let d = 0; d < totalDays; d++) {\n    // Check global slot limit\n    if (totalSlotsCalculated >= MAX_SLOTS_LIMIT) {\n      break; // Gracefully stop instead of error\n    }\n\n    const currentDate = new Date(startDate);\n    currentDate.setUTCDate(startDate.getUTCDate() + d);\n    \n    const dateStr = currentDate.toISOString().split('T')[0];\n    const dayOfWeek = currentDate.getUTCDay(); // 0=Sunday\n    const dayName = DAY_NAMES[dayOfWeek];\n\n    // Get schedules for this day\n    const daySchedules = scheduleByDay[dayOfWeek];\n    \n    if (!daySchedules || daySchedules.length === 0) {\n      continue; // No schedule for this day\n    }\n\n    const daySlots = [];\n    let daySlotsCount = 0;\n\n    for (const schedule of daySchedules) {\n      let currentMins = schedule.startMins;\n      const endMins = schedule.endMins;\n\n      while (currentMins + slot_duration_mins <= endMins) {\n        // Check limits\n        if (totalSlotsCalculated >= MAX_SLOTS_LIMIT || daySlotsCount >= SLOTS_PER_DAY_LIMIT) {\n          break;\n        }\n\n        const timeStr = minutesToTime(currentMins);\n        \n        // Create slot datetime in provider's timezone\n        // Note: We create the slot time and then convert to timestamp for comparison\n        const slotDateTimeStr = `${dateStr}T${timeStr}:00`;\n        \n        // For comparison, we need to calculate the actual timestamp\n        // considering the provider's timezone\n        const slotLocalDate = new Date(slotDateTimeStr);\n        const tzOffset = getTimezoneOffsetMinutes(timezone, slotLocalDate);\n        const slotStartMs = slotLocalDate.getTime() + (tzOffset * 60 * 1000);\n        const slotEndMs = slotStartMs + (slot_duration_mins * 60 * 1000);\n\n        // Determine slot status\n        let status;\n        if (slotStartMs < earliestBookableMs) {\n          status = 'past';\n          totalPast++;\n        } else if (isSlotBooked(slotStartMs, slotEndMs, bookedRanges)) {\n          status = 'booked';\n          totalBooked++;\n        } else {\n          status = 'available';\n          totalAvailable++;\n        }\n\n        daySlots.push({\n          time: timeStr,\n          status: status\n        });\n\n        currentMins += slot_duration_mins;\n        totalSlotsCalculated++;\n        daySlotsCount++;\n      }\n    }\n\n    if (daySlots.length > 0) {\n      dates.push({\n        date: dateStr,\n        day_name: dayName,\n        slots: daySlots,\n        available_count: daySlots.filter(s => s.status === 'available').length,\n        booked_count: daySlots.filter(s => s.status === 'booked').length,\n        past_count: daySlots.filter(s => s.status === 'past').length,\n        total_count: daySlots.length\n      });\n    }\n  }\n\n  // === Build response ===\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      data: {\n        provider_id: provider_id,\n        provider_name: provider_name,\n        provider_slug: provider_slug,\n        service_id: service_id || null,\n        slot_duration_mins: slot_duration_mins,\n        timezone: timezone,\n        date_range: date_range,\n        dates: dates,\n        summary: {\n          total_slots: totalSlotsCalculated,\n          total_available: totalAvailable,\n          total_booked: totalBooked,\n          total_past: totalPast,\n          days_with_availability: dates.filter(d => d.available_count > 0).length,\n          total_days_returned: dates.length,\n          slots_limit_reached: totalSlotsCalculated >= MAX_SLOTS_LIMIT\n        },\n        generated_at: new Date().toISOString()\n      }\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'CALCULATION_ERROR',\n      error_message: 'Error calculating slots: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "calculate-slots-05",
+      "name": "Calculate Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-webhook",
+              "leftValue": "={{ $('Webhook Test').isExecuted }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-webhook-05",
+      "name": "IF: From Webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1100, 260]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "X-Workflow",
+                "value": "BB_03_05_CalculateSlots"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook-05",
+      "name": "Respond Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 160]
+    },
+    {
+      "parameters": {},
+      "id": "output-05",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1320, 360]
+    }
+  ],
+  "connections": {
+    "Webhook Test": {
+      "main": [[{"node": "Merge Entry", "type": "main", "index": 0}]]
+    },
+    "Start": {
+      "main": [[{"node": "Merge Entry", "type": "main", "index": 1}]]
+    },
+    "Merge Entry": {
+      "main": [[{"node": "Paranoid Guard", "type": "main", "index": 0}]]
+    },
+    "Paranoid Guard": {
+      "main": [[{"node": "Switch: Guard OK?", "type": "main", "index": 0}]]
+    },
+    "Switch: Guard OK?": {
+      "main": [
+        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
+        [{"node": "Calculate Slots", "type": "main", "index": 0}]
+      ]
+    },
+    "Calculate Slots": {
+      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
+    },
+    "IF: From Webhook?": {
+      "main": [
+        [{"node": "Respond Webhook", "type": "main", "index": 0}],
+        [{"node": "Output", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "_Za9GzqB2cS9HVwBglt43",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

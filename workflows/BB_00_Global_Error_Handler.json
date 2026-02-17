@@ -1,856 +1,247 @@
 {
   "nodes": [
     {
-      "parameters": {},
-      "id": "bece51f1-6fb5-4e0c-9896-c9a8cba3f035",
-      "name": "Error Trigger",
-      "type": "n8n-nodes-base.errorTrigger",
+      "parameters": {
+        "content": "### \u26a0\ufe0f MANTENIMIENTO\nEliminar el nodo \"Test Webhook\" despu\u00e9s de validar las notificaciones de Telegram y los logs de DB. \nSolo debe quedar el \"Error Workflow Trigger\" para producci\u00f3n.",
+        "width": 300,
+        "color": 6
+      },
+      "id": "sticky_note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -6512,
-        2000
+        -208,
+        112
       ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "test-global-error",
+        "options": {}
+      },
+      "id": "test_webhook",
+      "name": "Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        400
+      ],
+      "webhookId": "19181505-8922-4bf3-be7e-26889d0daa0d"
     },
     {
       "parameters": {
         "inputSource": "passthrough"
       },
+      "id": "trigger",
+      "name": "Start",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        -6512,
-        2192
-      ],
-      "id": "ff2b0575-707d-4e25-8e21-e6a0f5f06a80",
-      "name": "When Executed by Another Workflow"
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// STRICT INPUT VALIDATION - V2\n// Valida datos de llamadas manuales\n// Error Trigger siempre pasa (es automático de n8n)\n// ============================================\n\ntry {\n  const item = $input.first();\n  const TIMEZONE = 'America/Santiago';\n  \n  const getTimestamp = () => {\n    return new Date().toLocaleString('sv-SE', { timeZone: TIMEZONE }).replace(' ', 'T') + 'Z';\n  };\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      valid: false,\n      validation_error: true,\n      error_code: 'NO_INPUT_DATA',\n      error_message: 'El payload está vacío o es inválido',\n      timestamp: getTimestamp()\n    }}];\n  }\n  \n  const json = item.json;\n  \n  // CASO 1: Error Trigger (automático de n8n)\n  if (json.execution && json.workflow) {\n    return [{ json: {\n      ...json,\n      valid: true,\n      source: 'error_trigger',\n      validation_passed: true,\n      received_at: getTimestamp()\n    }}];\n  }\n  \n  // CASO 2: Llamada Manual - Validación Estricta\n  const validationErrors = [];\n  \n  const errorMsg = json.error_message || json.errorMessage || json.message;\n  if (!errorMsg) {\n    validationErrors.push('error_message es requerido');\n  } else if (typeof errorMsg !== 'string') {\n    validationErrors.push('error_message debe ser string');\n  } else if (errorMsg.trim().length === 0) {\n    validationErrors.push('error_message no puede estar vacío');\n  } else if (errorMsg.length > 5000) {\n    validationErrors.push('error_message excede 5000 caracteres');\n  }\n  \n  const workflowName = json.workflow_name || json.workflowName;\n  if (!workflowName) {\n    validationErrors.push('workflow_name es requerido');\n  } else if (typeof workflowName !== 'string') {\n    validationErrors.push('workflow_name debe ser string');\n  } else if (workflowName.trim().length === 0) {\n    validationErrors.push('workflow_name no puede estar vacío');\n  } else if (workflowName.length > 200) {\n    validationErrors.push('workflow_name excede 200 caracteres');\n  }\n  \n  if (json.severity !== undefined && json.severity !== null) {\n    const validSeverities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];\n    const severityUpper = String(json.severity).toUpperCase();\n    if (!validSeverities.includes(severityUpper)) {\n      validationErrors.push('severity debe ser: CRITICAL, HIGH, MEDIUM o LOW');\n    }\n  }\n  \n  if (json.user_id !== undefined && json.user_id !== null && json.user_id !== '') {\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n    if (!uuidRegex.test(String(json.user_id))) {\n      validationErrors.push('user_id debe ser un UUID válido');\n    }\n  }\n  \n  if (json.error_type !== undefined && json.error_type !== null) {\n    if (typeof json.error_type !== 'string') {\n      validationErrors.push('error_type debe ser string');\n    } else if (json.error_type.length > 100) {\n      validationErrors.push('error_type excede 100 caracteres');\n    }\n  }\n  \n  if (validationErrors.length > 0) {\n    return [{ json: {\n      valid: false,\n      validation_error: true,\n      error_code: 'VALIDATION_FAILED',\n      error_message: 'Validación fallida: ' + validationErrors.join('; '),\n      validation_errors: validationErrors,\n      received_fields: Object.keys(json),\n      timestamp: getTimestamp()\n    }}];\n  }\n  \n  return [{ json: {\n    ...json,\n    valid: true,\n    source: 'execute_workflow',\n    validation_passed: true,\n    received_at: getTimestamp()\n  }}];\n  \n} catch (e) {\n  return [{ json: {\n    valid: false,\n    validation_error: true,\n    error_code: 'VALIDATION_EXCEPTION',\n    error_message: 'Error interno de validación: ' + (e.message || 'Unknown'),\n    timestamp: new Date().toISOString()\n  }}];\n}"
-      },
-      "id": "4b39eb54-d279-46f4-901a-5b10f6fa019c",
-      "name": "Strict Input Validation",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -6272,
-        2192
+        0,
+        208
       ]
     },
     {
       "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "check-valid",
-                    "leftValue": "={{ $json.valid }}",
-                    "rightValue": true,
-                    "operator": {
-                      "type": "boolean",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              }
-            }
-          ]
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_00_Global_Error_Handler';\nconst meta = () => ({ source: 'error_handler', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json;\n  \n  // Handle both Error Trigger and Manual Webhook\n  const errorInfo = {\n    execution_id: raw.execution?.id || 'manual_test',\n    workflow_id: raw.workflow?.id || 'manual_test',\n    workflow_name: raw.workflow?.name || 'Manual_Test_Workflow',\n    error_message: (raw.execution?.error?.message || raw.error?.message || raw.message || 'Unknown error').replace(/[<>]/g, ''),\n    timestamp: DateTime.utc().toISO(),\n    severity: 'CRITICAL',\n    environment: 'production'\n  };\n  \n  return ok(errorInfo);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+      },
+      "id": "guard",
+      "name": "Process Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_00_Global_Error_Handler';\nconst meta = () => ({ source: 'error_handler', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n\ntry {\n  const items = $input.all();\n  if (!items?.length) {\n    return [{ json: { \n      success: false, \n      error_code: 'PRESERVE_NO_INPUT', \n      error_message: 'No data to preserve', \n      data: null, \n      _meta: meta() \n    } }];\n  }\n\n  // Preservar los datos originales ANTES de que DB Log los modifique\n  const inputData = items[0].json;\n  \n  // Estructura estandar para Telegram y DB\n  const preservedData = {\n    success: inputData.success,\n    error_code: inputData.error_code,\n    error_message: inputData.error_message,\n    data: {\n      execution_id: inputData.data?.execution_id || 'unknown',\n      workflow_id: inputData.data?.workflow_id || 'unknown',\n      workflow_name: inputData.data?.workflow_name || 'unknown',\n      error_message: inputData.data?.error_message || 'Unknown error',\n      timestamp: inputData.data?.timestamp || DateTime.utc().toISO(),\n      severity: inputData.data?.severity || 'CRITICAL',\n      environment: inputData.data?.environment || 'production'\n    },\n    _meta: inputData._meta || meta()\n  };\n  \n  return [ { json: preservedData } ];\n} catch (e) {\n  return [{ json: { \n    success: false, \n    error_code: 'PRESERVE_ERROR', \n    error_message: `${WORKFLOW_ID}: ${e.message}`, \n    data: null, \n    _meta: meta() \n  } }];\n}"
+      },
+      "id": "preserve_data",
+      "name": "Preserve Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "error_handling",
+          "mode": "id"
         },
-        "options": {
-          "fallbackOutput": "extra",
-          "allMatchingOutputs": false
-        }
-      },
-      "id": "b79b469b-f32e-42e1-aee1-09d213de00a8",
-      "name": "Validation Passed?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        -6016,
-        2192
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const json = $input.first()?.json || {};\n\nreturn [{ json: {\n  success: false,\n  error: true,\n  error_code: json.error_code || 'VALIDATION_FAILED',\n  error_message: json.error_message || 'Validación fallida',\n  validation_errors: json.validation_errors || [],\n  timestamp: new Date().toISOString()\n}}];"
-      },
-      "id": "549d13bc-9ccc-48a2-bb57-182e55c03fcf",
-      "name": "Return Validation Error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -6016,
-        2400
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// VALIDATE AND PARSE ERROR - V2\n// Normaliza la estructura de datos\n// ============================================\n\ntry {\n  const item = $input.first();\n  const TIMEZONE = 'America/Santiago';\n  \n  const getTimestamp = () => {\n    return new Date().toLocaleString('sv-SE', { timeZone: TIMEZONE }).replace(' ', 'T');\n  };\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      source: 'unknown',\n      is_valid: false,\n      parse_error: 'NO_INPUT_DATA',\n      timestamp: getTimestamp()\n    }}];\n  }\n  \n  const json = item.json;\n  \n  let source = json.source || 'execute_workflow';\n  let workflowName = 'UNKNOWN';\n  let workflowId = 'UNKNOWN';\n  let executionId = 'UNKNOWN';\n  let lastNodeExecuted = 'UNKNOWN';\n  let errorMessage = 'UNKNOWN ERROR';\n  let errorStack = [];\n  let errorType = 'UNKNOWN';\n  let userId = null;\n  let additionalContext = {};\n  \n  // CASO 1: Error Trigger (automático de n8n)\n  if (json.execution && json.workflow) {\n    source = 'error_trigger';\n    workflowName = json.workflow?.name || 'UNKNOWN';\n    workflowId = json.workflow?.id || 'UNKNOWN';\n    executionId = json.execution?.id || 'UNKNOWN';\n    lastNodeExecuted = json.execution?.lastNodeExecuted || 'UNKNOWN';\n    \n    const rawError = json.execution?.error || json.error || {};\n    errorMessage = rawError.message || rawError.description || 'UNKNOWN ERROR';\n    \n    if (rawError.stack) {\n      errorStack = Array.isArray(rawError.stack) ? rawError.stack : [rawError.stack];\n    }\n    \n    const msgLower = errorMessage.toLowerCase();\n    if (msgLower.includes('econnrefused') || msgLower.includes('etimedout') || msgLower.includes('enotfound')) {\n      errorType = 'CONNECTION_ERROR';\n    } else if (msgLower.includes('timeout')) {\n      errorType = 'TIMEOUT_ERROR';\n    } else if (msgLower.includes('authenticate') || msgLower.includes('unauthorized') || msgLower.includes('401')) {\n      errorType = 'AUTH_ERROR';\n    } else if (msgLower.includes('not found') || msgLower.includes('404')) {\n      errorType = 'NOT_FOUND_ERROR';\n    } else if (msgLower.includes('duplicate') || msgLower.includes('unique') || msgLower.includes('already exists')) {\n      errorType = 'DUPLICATE_ERROR';\n    } else if (msgLower.includes('syntax') || msgLower.includes('parse') || msgLower.includes('json')) {\n      errorType = 'PARSE_ERROR';\n    } else if (msgLower.includes('permission') || msgLower.includes('forbidden') || msgLower.includes('403')) {\n      errorType = 'PERMISSION_ERROR';\n    } else if (msgLower.includes('rate limit') || msgLower.includes('too many') || msgLower.includes('429')) {\n      errorType = 'RATE_LIMIT_ERROR';\n    } else {\n      errorType = 'RUNTIME_ERROR';\n    }\n    \n    if (json.execution?.data) {\n      additionalContext.has_result_data = true;\n    }\n    if (json.execution?.mode) {\n      additionalContext.execution_mode = json.execution.mode;\n    }\n  }\n  // CASO 2: Llamada Manual (ya validada)\n  else {\n    source = 'execute_workflow';\n    workflowName = json.workflow_name || json.workflowName || 'UNKNOWN';\n    workflowId = json.workflow_id || json.workflowId || 'UNKNOWN';\n    executionId = json.execution_id || json.executionId || 'MANUAL_' + Date.now();\n    lastNodeExecuted = json.node_name || json.nodeName || json.last_node || 'UNKNOWN';\n    errorMessage = json.error_message || json.errorMessage || json.message || 'UNKNOWN ERROR';\n    errorType = json.error_type || json.errorType || 'MANUAL_REPORT';\n    userId = json.user_id || json.userId || null;\n    \n    if (json.error_stack || json.stack) {\n      const stack = json.error_stack || json.stack;\n      errorStack = Array.isArray(stack) ? stack : [stack];\n    }\n    \n    const knownKeys = ['workflow_name', 'workflowName', 'workflow_id', 'workflowId', \n                       'execution_id', 'executionId', 'node_name', 'nodeName', 'last_node',\n                       'error_message', 'errorMessage', 'message', 'error_type', 'errorType',\n                       'user_id', 'userId', 'error_stack', 'stack', 'severity',\n                       'valid', 'source', 'validation_passed', 'received_at'];\n    \n    for (const key of Object.keys(json)) {\n      if (!knownKeys.includes(key)) {\n        additionalContext[key] = json[key];\n      }\n    }\n    \n    if (json.severity) {\n      additionalContext.provided_severity = json.severity;\n    }\n  }\n  \n  return [{ json: {\n    source: source,\n    is_valid: true,\n    workflow: {\n      name: workflowName,\n      id: workflowId\n    },\n    execution: {\n      id: executionId,\n      last_node: lastNodeExecuted\n    },\n    error: {\n      type: errorType,\n      message: String(errorMessage).substring(0, 2000),\n      stack: errorStack.slice(0, 10)\n    },\n    user_id: userId,\n    context: additionalContext,\n    timestamp: getTimestamp(),\n    timezone: TIMEZONE\n  }}];\n  \n} catch (e) {\n  return [{ json: {\n    source: 'unknown',\n    is_valid: false,\n    parse_error: 'PARSE_EXCEPTION: ' + (e.message || 'Unknown'),\n    timestamp: new Date().toISOString()\n  }}];\n}"
-      },
-      "id": "cd5404b6-70f1-46f9-aa0c-717587033b36",
-      "name": "Validate and Parse Error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -5760,
-        2096
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// REDACT PII - V2 Protección de Datos Sensibles\n// 40+ patrones, bloquea si falla críticamente\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: { \n      redact_error: 'NO_INPUT', \n      redaction_failed: true,\n      block_send: true,\n      timestamp: new Date().toISOString() \n    }}];\n  }\n  \n  const sensitivePatterns = [\n    'email', 'e-mail', 'correo', 'mail',\n    'phone', 'telefono', 'celular', 'movil', 'mobile', 'fono',\n    'name', 'nombre', 'first_name', 'last_name', 'apellido', 'full_name',\n    'rut', 'dni', 'cedula', 'passport', 'pasaporte', 'ssn', 'social_security',\n    'address', 'direccion', 'domicilio', 'street', 'calle',\n    'birthdate', 'fecha_nacimiento', 'dob', 'birthday',\n    'telegram_id', 'telegram_user', 'chat_id', 'user_id', 'customer_id',\n    'account_id', 'client_id', 'member_id',\n    'password', 'passwd', 'pwd', 'contrasena', 'clave', 'pass',\n    'token', 'access_token', 'refresh_token', 'auth_token', 'bearer', 'jwt',\n    'secret', 'api_key', 'apikey', 'private_key', 'secret_key', 'encryption_key',\n    'authorization', 'auth_header', 'x-api-key', 'x-auth-token',\n    'credentials', 'credential',\n    'credit_card', 'card_number', 'tarjeta', 'cvv', 'cvc', 'ccv', 'card_exp',\n    'bank_account', 'cuenta_bancaria', 'iban', 'swift', 'routing_number',\n    'payment', 'billing',\n    'session_id', 'session_token', 'cookie', 'csrf', 'xsrf',\n    'ip_address', 'ip_addr', 'client_ip', 'remote_addr', 'x_forwarded', 'x-real-ip'\n  ];\n  \n  let redactedCount = 0;\n  let redactionErrors = [];\n  \n  function shouldRedact(key) {\n    if (!key || typeof key !== 'string') return false;\n    const lowerKey = key.toLowerCase().replace(/[-_]/g, '');\n    return sensitivePatterns.some(pattern => {\n      const normalizedPattern = pattern.toLowerCase().replace(/[-_]/g, '');\n      return lowerKey.includes(normalizedPattern);\n    });\n  }\n  \n  function redactValue(val) {\n    if (val === null || val === undefined) return val;\n    const str = String(val);\n    if (str.length === 0) return str;\n    redactedCount++;\n    if (str.length <= 4) return '****';\n    if (str.length <= 8) return str.substring(0, 1) + '****' + str.substring(str.length - 1);\n    return str.substring(0, 2) + '****' + str.substring(str.length - 2);\n  }\n  \n  function processValue(val, key, path = '') {\n    try {\n      if (val === null || val === undefined) return val;\n      \n      if (shouldRedact(key)) {\n        return redactValue(val);\n      }\n      \n      if (Array.isArray(val)) {\n        return val.map((item, idx) => processValue(item, String(idx), `${path}[${idx}]`));\n      }\n      \n      if (typeof val === 'object') {\n        const result = {};\n        for (const k of Object.keys(val)) {\n          result[k] = processValue(val[k], k, `${path}.${k}`);\n        }\n        return result;\n      }\n      \n      if (typeof val === 'string') {\n        if (/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(val)) {\n          redactedCount++;\n          return redactValue(val);\n        }\n        if (/^eyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]*$/.test(val)) {\n          redactedCount++;\n          return val.substring(0, 10) + '...REDACTED_JWT';\n        }\n        const cleanedNum = val.replace(/[\\s-]/g, '');\n        if (/^\\d{13,19}$/.test(cleanedNum)) {\n          redactedCount++;\n          return '****-****-****-' + cleanedNum.slice(-4);\n        }\n        if (/^\\d{1,2}\\.?\\d{3}\\.?\\d{3}[-]?[0-9kK]$/.test(val.replace(/\\s/g, ''))) {\n          redactedCount++;\n          return '**.***.' + val.slice(-4);\n        }\n        if (/^\\+?56\\d{9}$/.test(val.replace(/[\\s-]/g, ''))) {\n          redactedCount++;\n          return '+56****' + val.slice(-4);\n        }\n      }\n      \n      return val;\n    } catch (innerError) {\n      redactionErrors.push({ path, error: innerError.message });\n      return '[REDACTION_ERROR]';\n    }\n  }\n  \n  const safeData = processValue(JSON.parse(JSON.stringify(item.json)), 'root');\n  const criticalFailure = redactionErrors.length > 5;\n  \n  return [{ json: {\n    ...safeData,\n    _redaction_meta: {\n      redacted_count: redactedCount,\n      errors: redactionErrors.length > 0 ? redactionErrors.slice(0, 5) : undefined,\n      critical_failure: criticalFailure,\n      block_send: criticalFailure\n    }\n  }}];\n  \n} catch (e) {\n  console.error('BB_00 CRITICAL: PII Redaction completely failed!', e.message);\n  \n  return [{ json: {\n    redact_error: 'REDACTION_FAILED: ' + (e.message || 'Unknown'),\n    source: $input.first()?.json?.source || 'unknown',\n    is_valid: false,\n    _redaction_meta: {\n      critical_failure: true,\n      block_send: true,\n      error: e.message\n    },\n    timestamp: new Date().toISOString()\n  }}];\n}"
-      },
-      "id": "d35bac84-e1ab-4039-aebe-049108cd666a",
-      "name": "Redact PII",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -5520,
-        2096
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// CLASSIFY SEVERITY - V2\n// ============================================\n\ntry {\n  const item = $input.first();\n  \n  if (!item || !item.json) {\n    return [{ json: {\n      severity: 'HIGH',\n      severity_reason: 'COULD_NOT_PARSE',\n      timestamp: new Date().toISOString()\n    }}];\n  }\n  \n  const json = item.json;\n  \n  if (json._redaction_meta?.critical_failure) {\n    return [{ json: {\n      ...json,\n      severity: 'CRITICAL',\n      severity_reason: 'REDACTION_CRITICAL_FAILURE'\n    }}];\n  }\n  \n  const errorType = json.error?.type || '';\n  const errorMessage = (json.error?.message || '').toLowerCase();\n  const workflowName = (json.workflow?.name || '').toLowerCase();\n  const providedSeverity = json.context?.provided_severity;\n  \n  let severity = 'MEDIUM';\n  let severityReason = 'DEFAULT';\n  \n  if (providedSeverity && ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(providedSeverity.toUpperCase())) {\n    severity = providedSeverity.toUpperCase();\n    severityReason = 'PROVIDED_BY_CALLER';\n  } else {\n    const criticalPatterns = [\n      'database', 'db connection', 'postgres', 'connection refused',\n      'econnrefused', 'authentication failed', 'credential',\n      'out of memory', 'disk full', 'fatal', 'panic',\n      'ssl', 'certificate', 'permission denied', 'access denied',\n      'data corruption', 'integrity', 'deadlock', 'lock timeout',\n      'heap', 'stack overflow', 'segmentation fault', 'core dump'\n    ];\n    \n    const highPatterns = [\n      'timeout', 'etimedout', 'unauthorized', '401', '403',\n      'rate limit', 'too many requests', '429',\n      'internal server error', '500', 'bad gateway', '502',\n      'service unavailable', '503', 'telegram', 'payment',\n      'booking', 'reservation', 'appointment', 'transaction',\n      'webhook failed', 'api error', 'external service'\n    ];\n    \n    const lowPatterns = [\n      'not found', '404', 'validation', 'invalid input',\n      'bad request', '400', 'duplicate', 'already exists',\n      'user cancelled', 'cancelled by user', 'no data',\n      'empty response', 'missing field', 'format error'\n    ];\n    \n    const criticalWorkflows = [\n      'auth', 'payment', 'error_handler', 'bb_00', 'bb_01', 'bb_02',\n      'security', 'firewall', 'transaction', 'booking'\n    ];\n    \n    const matchesPatterns = (patterns) => {\n      return patterns.some(p => \n        errorMessage.includes(p) || errorType.toLowerCase().includes(p)\n      );\n    };\n    \n    if (matchesPatterns(criticalPatterns)) {\n      severity = 'CRITICAL';\n      severityReason = 'CRITICAL_PATTERN_MATCH';\n    } else if (matchesPatterns(highPatterns)) {\n      severity = 'HIGH';\n      severityReason = 'HIGH_PATTERN_MATCH';\n    } else if (matchesPatterns(lowPatterns)) {\n      severity = 'LOW';\n      severityReason = 'LOW_PATTERN_MATCH';\n    }\n    \n    if (criticalWorkflows.some(w => workflowName.includes(w))) {\n      if (severity === 'LOW') {\n        severity = 'MEDIUM';\n        severityReason = 'CRITICAL_WORKFLOW_UPGRADE';\n      } else if (severity === 'MEDIUM') {\n        severity = 'HIGH';\n        severityReason = 'CRITICAL_WORKFLOW_UPGRADE';\n      }\n    }\n    \n    if (json.source === 'error_trigger' && severity === 'LOW') {\n      severity = 'MEDIUM';\n      severityReason = 'ERROR_TRIGGER_MINIMUM';\n    }\n  }\n  \n  return [{ json: {\n    ...json,\n    severity: severity,\n    severity_reason: severityReason\n  }}];\n  \n} catch (e) {\n  const inputData = $input.first()?.json || {};\n  return [{ json: {\n    ...inputData,\n    severity: 'HIGH',\n    severity_reason: 'CLASSIFICATION_ERROR: ' + (e.message || 'Unknown')\n  }}];\n}"
-      },
-      "id": "d7f4c8d9-ccc8-4cb5-9b96-f9b12b1883ec",
-      "name": "Classify Severity",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -5264,
-        2096
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT key, value FROM public.app_config WHERE key IN ('ADMIN_TELEGRAM_CHAT_ID', 'ADMIN_EMAIL', 'N8N_BASE_URL', 'TIMEZONE', 'TELEGRAM_NOTIFICATIONS_ENABLED', 'EMAIL_NOTIFICATIONS_ENABLED') AND category IN ('notifications', 'system')",
-        "options": {}
-      },
-      "id": "2dc0df94-ebd5-4920-aa7f-7cb1d644e1b0",
-      "name": "Get Config",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        -5008,
-        1920
-      ],
-      "alwaysOutputData": true,
-      "credentials": {
-        "postgres": {
-          "id": "99BnrzwZQDhYU6Ly",
-          "name": "Postgres Booking"
-        }
-      },
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT is_open, current_state, failure_count, can_attempt, next_attempt_at FROM public.check_circuit_breaker('{{ $json.workflow.name }}', 50, 5, 15)",
-        "options": {}
-      },
-      "id": "a3cdc3da-808f-46bc-8a70-794760ef3436",
-      "name": "Check Circuit Breaker",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        -5008,
-        2096
-      ],
-      "alwaysOutputData": true,
-      "credentials": {
-        "postgres": {
-          "id": "99BnrzwZQDhYU6Ly",
-          "name": "Postgres Booking"
-        }
-      },
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT COUNT(*)::int as error_count FROM public.system_errors WHERE workflow_name = '{{ $json.workflow.name }}' AND created_at > NOW() - INTERVAL '5 minutes'",
-        "options": {}
-      },
-      "id": "0a952419-f84d-4ada-91a8-e148ef4a6bb1",
-      "name": "Check Rate Limit",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        -5008,
-        2272
-      ],
-      "alwaysOutputData": true,
-      "credentials": {
-        "postgres": {
-          "id": "99BnrzwZQDhYU6Ly",
-          "name": "Postgres Booking"
-        }
-      },
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "mode": "combine",
-        "combineBy": "combineAll",
-        "options": {}
-      },
-      "id": "46e94dea-4b65-469c-99b2-e91b90a68e24",
-      "name": "Merge All Data",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [
-        -4752,
-        2096
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// PROCESS MERGED DATA - V2\n// Circuit Breaker + Config + Rate Limit\n// ============================================\n\ntry {\n  const items = $input.all();\n  const TIMEZONE = 'America/Santiago';\n\n  let envConfig = {\n    RATE_LIMIT: 10,\n    ADMIN_CHAT_ID: '5391760292',\n    ADMIN_EMAIL: 'admin@autoagenda.cl',\n    N8N_BASE_URL: 'https://n8n.autoagenda.cl',\n    TELEGRAM_ENABLED: true,\n    EMAIL_ENABLED: true,\n    TIMEZONE: TIMEZONE\n  };\n  \n  try { envConfig.RATE_LIMIT = parseInt($env.BB_ERROR_RATE_LIMIT) || 10; } catch (e) {}\n  try { envConfig.ADMIN_CHAT_ID = $env.BB_DEFAULT_ADMIN_CHAT_ID || '5391760292'; } catch (e) {}\n  try { envConfig.ADMIN_EMAIL = $env.BB_DEFAULT_ADMIN_EMAIL || 'admin@autoagenda.cl'; } catch (e) {}\n  try { envConfig.N8N_BASE_URL = $env.N8N_BASE_URL || 'https://n8n.autoagenda.cl'; } catch (e) {}\n\n  if (!items || items.length === 0) {\n    return [{ json: {\n      can_send_telegram: true,\n      can_send_email: false,\n      admin_chat_id: envConfig.ADMIN_CHAT_ID,\n      admin_email: envConfig.ADMIN_EMAIL,\n      rate_limit_exceeded: false,\n      circuit_breaker_open: false,\n      error_count_5min: 0,\n      db_unreachable: true,\n      system_warning: 'DB_UNREACHABLE_NO_ITEMS',\n      severity: 'CRITICAL',\n      severity_reason: 'DB_FAILURE'\n    }}];\n  }\n\n  let errorData = null;\n  let configMap = {};\n  let errorCount = 0;\n  let circuitBreakerOpen = false;\n  let circuitBreakerState = 'CLOSED';\n  let dbErrors = [];\n\n  for (const item of items) {\n    if (!item || !item.json) continue;\n    const json = item.json;\n\n    if (json.error || (json.message && typeof json.message === 'string' &&\n        (json.message.includes('error') || json.message.includes('ECONNREFUSED')))) {\n      dbErrors.push(json.message || json.error || 'Unknown DB error');\n      continue;\n    }\n\n    if (json.key && json.value !== undefined) {\n      configMap[json.key] = json.value;\n      continue;\n    }\n\n    if (json.error_count !== undefined) {\n      errorCount = parseInt(json.error_count) || 0;\n      continue;\n    }\n\n    if (json.is_open !== undefined || json.current_state !== undefined) {\n      circuitBreakerOpen = json.is_open === true;\n      circuitBreakerState = json.current_state || 'UNKNOWN';\n      if (json.failure_count) {\n        errorCount = Math.max(errorCount, parseInt(json.failure_count) || 0);\n      }\n      continue;\n    }\n\n    if (json.workflow || json.source || json.error) {\n      errorData = json;\n    }\n  }\n\n  if (!errorData) {\n    errorData = items.find(i => i?.json?.workflow || i?.json?.source)?.json || {};\n  }\n\n  const finalConfig = {\n    adminChatId: configMap['ADMIN_TELEGRAM_CHAT_ID'] || envConfig.ADMIN_CHAT_ID,\n    adminEmail: configMap['ADMIN_EMAIL'] || envConfig.ADMIN_EMAIL,\n    n8nBaseUrl: configMap['N8N_BASE_URL'] || envConfig.N8N_BASE_URL,\n    timezone: configMap['TIMEZONE'] || envConfig.TIMEZONE,\n    telegramEnabled: configMap['TELEGRAM_NOTIFICATIONS_ENABLED'] !== 'false',\n    emailEnabled: configMap['EMAIL_NOTIFICATIONS_ENABLED'] !== 'false',\n    rateLimit: envConfig.RATE_LIMIT\n  };\n\n  const dbUnreachable = dbErrors.length >= 2;\n  let finalSeverity = errorData.severity || 'MEDIUM';\n  let severityReason = errorData.severity_reason || 'DEFAULT';\n  let systemWarning = null;\n\n  if (dbUnreachable) {\n    finalSeverity = 'CRITICAL';\n    severityReason = 'DB_UNREACHABLE';\n    systemWarning = '⚠️ DB UNREACHABLE: ' + dbErrors.slice(0, 2).join('; ');\n    console.error('BB_00: Database unreachable!', dbErrors);\n  }\n\n  if (circuitBreakerOpen && finalSeverity !== 'CRITICAL') {\n    systemWarning = '🔌 Circuit Breaker OPEN para: ' + (errorData.workflow?.name || 'Unknown');\n    console.warn('BB_00: Circuit breaker is OPEN');\n  }\n\n  const rateLimitExceeded = errorCount >= finalConfig.rateLimit;\n  \n  const canSendTelegram = finalConfig.telegramEnabled && \n    ((finalSeverity === 'CRITICAL') || (!rateLimitExceeded && !circuitBreakerOpen));\n  \n  const canSendEmail = finalConfig.emailEnabled && (finalSeverity === 'CRITICAL');\n\n  return [{ json: {\n    ...errorData,\n    severity: finalSeverity,\n    severity_reason: severityReason,\n    admin_chat_id: finalConfig.adminChatId,\n    admin_email: finalConfig.adminEmail,\n    n8n_base_url: finalConfig.n8nBaseUrl,\n    timezone: finalConfig.timezone,\n    error_count_5min: errorCount,\n    rate_limit: finalConfig.rateLimit,\n    rate_limit_exceeded: rateLimitExceeded,\n    circuit_breaker_open: circuitBreakerOpen,\n    circuit_breaker_state: circuitBreakerState,\n    can_send_telegram: canSendTelegram,\n    can_send_email: canSendEmail,\n    telegram_enabled: finalConfig.telegramEnabled,\n    email_enabled: finalConfig.emailEnabled,\n    db_unreachable: dbUnreachable,\n    db_errors: dbErrors.length > 0 ? dbErrors : undefined,\n    system_warning: systemWarning\n  }}];\n\n} catch (e) {\n  const fallbackData = $input.first()?.json || {};\n  console.error('BB_00: Process Merged Data CRITICAL FAILURE:', e.message);\n\n  return [{ json: {\n    ...fallbackData,\n    severity: 'CRITICAL',\n    severity_reason: 'PROCESS_EXCEPTION',\n    admin_chat_id: '5391760292',\n    admin_email: 'admin@autoagenda.cl',\n    error_count_5min: 0,\n    rate_limit: 10,\n    rate_limit_exceeded: false,\n    circuit_breaker_open: false,\n    can_send_telegram: true,\n    can_send_email: true,\n    db_unreachable: true,\n    system_warning: '⚠️ PROCESS_EXCEPTION: ' + (e.message || 'Unknown')\n  }}];\n}"
-      },
-      "id": "4eac7af0-54c4-4f86-96cf-e4b89eddb0df",
-      "name": "Process Merged Data",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -4496,
-        2096
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// PREPARE DB INSERT\n// ============================================\n\nconst json = $input.first()?.json || {};\n\nconst workflowName = (json.workflow?.name || 'UNKNOWN').replace(/'/g, \"''\");\nconst executionId = (json.execution?.id || 'UNKNOWN').replace(/'/g, \"''\");\nconst errorType = (json.error?.type || 'UNKNOWN').replace(/'/g, \"''\");\nconst severity = json.severity || 'MEDIUM';\nconst errorMessage = (json.error?.message || 'UNKNOWN').substring(0, 2000).replace(/'/g, \"''\");\nconst errorStack = JSON.stringify(json.error?.stack || []).replace(/'/g, \"''\");\nconst errorContext = JSON.stringify({\n  source: json.source,\n  severity_reason: json.severity_reason,\n  last_node: json.execution?.last_node,\n  context: json.context,\n  system_warning: json.system_warning,\n  rate_limit_exceeded: json.rate_limit_exceeded,\n  circuit_breaker_state: json.circuit_breaker_state\n}).replace(/'/g, \"''\");\nconst userId = json.user_id || null;\n\nreturn [{ json: {\n  ...json,\n  _db_params: {\n    workflow_name: workflowName,\n    execution_id: executionId,\n    error_type: errorType,\n    severity: severity,\n    error_message: errorMessage,\n    error_stack: errorStack,\n    error_context: errorContext,\n    user_id: userId\n  }\n}}];"
-      },
-      "id": "1465251c-53c4-420f-bde9-20e0df9fd3cf",
-      "name": "Prepare DB Insert",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -4256,
-        2432
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO public.system_errors (error_id, workflow_name, workflow_execution_id, error_type, severity, error_message, error_stack, error_context, user_id, created_at) VALUES (gen_random_uuid(), '{{ $json._db_params.workflow_name }}', '{{ $json._db_params.execution_id }}', '{{ $json._db_params.error_type }}', '{{ $json._db_params.severity }}', '{{ $json._db_params.error_message }}', '{{ $json._db_params.error_stack }}'::jsonb, '{{ $json._db_params.error_context }}'::jsonb, {{ $json._db_params.user_id ? \"'\" + $json._db_params.user_id + \"'::uuid\" : \"NULL\" }}, NOW()) RETURNING error_id",
-        "options": {}
-      },
-      "id": "b5f73716-f479-4563-8a98-77dddfb5a8a1",
-      "name": "Log to DB",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        -3936,
-        2464
-      ],
-      "alwaysOutputData": true,
-      "credentials": {
-        "postgres": {
-          "id": "99BnrzwZQDhYU6Ly",
-          "name": "Postgres Booking"
-        }
-      },
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// HANDLE DB RESULT\n// ============================================\n\nconst items = $input.all();\nconst mainData = items.find(i => i?.json?.workflow || i?.json?.source)?.json || items[0]?.json || {};\nconst dbResult = items.find(i => i?.json?.error_id !== undefined)?.json || {};\n\nconst dbSuccess = dbResult.error_id && !dbResult.error;\nconst dbError = !dbSuccess ? (dbResult.message || dbResult.error || 'Unknown DB error') : null;\n\nif (!dbSuccess) {\n  console.error('BB_00: Log to DB failed:', dbError);\n}\n\nreturn [{ json: {\n  ...mainData,\n  db_logged: dbSuccess,\n  db_error_id: dbResult.error_id || null,\n  db_error: dbError\n}}];"
-      },
-      "id": "f7762865-a3dd-41b7-b872-177c9a5c99f5",
-      "name": "Handle DB Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -3632,
-        2448
-      ]
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "can-send-telegram",
-                    "leftValue": "={{ $json.can_send_telegram }}",
-                    "rightValue": true,
-                    "operator": {
-                      "type": "boolean",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Send Telegram"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "rate-limited",
-                    "leftValue": "={{ $json.rate_limit_exceeded }}",
-                    "rightValue": true,
-                    "operator": {
-                      "type": "boolean",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Rate Limited"
-            }
-          ]
+        "table": {
+          "__rl": true,
+          "value": "error_logs",
+          "mode": "id"
         },
-        "options": {
-          "fallbackOutput": "extra",
-          "allMatchingOutputs": false
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_name": "={{ $json.data.workflow_name }}",
+            "error_type": "RUNTIME_ERROR",
+            "error_message": "={{ $json.data.error_message }}",
+            "severity": "={{ $json.data.severity }}",
+            "environment": "={{ $json.data.environment }}",
+            "metadata": "={{ JSON.stringify($json.data) }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "db_log",
+      "name": "DB Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        672,
+        304
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
         }
       },
-      "id": "0d127fe1-4699-4630-b289-49404cff671c",
-      "name": "Route Alerts",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        -4240,
-        2000
-      ]
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT TELEGRAM MESSAGE - V2\n// ============================================\n\ntry {\n  const json = $input.first()?.json || {};\n  const TIMEZONE = json.timezone || 'America/Santiago';\n  \n  const severityConfig = {\n    'CRITICAL': { emoji: '🔴', prefix: '‼️ CRÍTICO' },\n    'HIGH': { emoji: '🟠', prefix: '⚠️ ALTO' },\n    'MEDIUM': { emoji: '🟡', prefix: '📢 MEDIO' },\n    'LOW': { emoji: '🟢', prefix: 'ℹ️ BAJO' }\n  };\n  \n  const severity = json.severity || 'MEDIUM';\n  const config = severityConfig[severity] || severityConfig['MEDIUM'];\n  \n  const workflowName = json.workflow?.name || 'UNKNOWN';\n  const workflowId = json.workflow?.id || '';\n  const lastNode = json.execution?.last_node || 'UNKNOWN';\n  const executionId = json.execution?.id || 'N/A';\n  const errorType = json.error?.type || 'UNKNOWN';\n  const source = json.source === 'error_trigger' ? '🔄 Auto' : '📞 Manual';\n  \n  let errorMessage = json.error?.message || 'UNKNOWN ERROR';\n  errorMessage = errorMessage.substring(0, 400)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n  \n  const systemWarning = json.system_warning \n    ? `\\n\\n⚠️ <b>ALERTA:</b>\\n<code>${json.system_warning.substring(0, 200)}</code>`\n    : '';\n  \n  const rateInfo = json.error_count_5min > 0 \n    ? `\\n⏱️ <i>${json.error_count_5min}/${json.rate_limit} errores en 5min</i>`\n    : '';\n  \n  const circuitInfo = json.circuit_breaker_open \n    ? '\\n🔌 <b>Circuit Breaker:</b> ABIERTO' \n    : '';\n  \n  const dbStatus = json.db_unreachable \n    ? '\\n💾 <b>DB:</b> ❌ UNREACHABLE' \n    : '';\n  \n  const timestamp = new Date().toLocaleString('es-CL', { \n    timeZone: TIMEZONE,\n    day: '2-digit',\n    month: '2-digit',\n    year: 'numeric',\n    hour: '2-digit',\n    minute: '2-digit',\n    second: '2-digit'\n  });\n  \n  const message = `${config.emoji} <b>${config.prefix}: ERROR EN AUTOAGENDA</b>\\n\\n` +\n    `📋 <b>Workflow:</b> ${workflowName}\\n` +\n    `📍 <b>Nodo:</b> ${lastNode}\\n` +\n    `🏷️ <b>Tipo:</b> ${errorType}\\n` +\n    `📡 <b>Fuente:</b> ${source}` +\n    circuitInfo +\n    dbStatus +\n    systemWarning +\n    `\\n\\n<b>Mensaje:</b>\\n<pre>${errorMessage}</pre>` +\n    `\\n\\n🔗 <b>Execution:</b>\\n<code>${executionId}</code>` +\n    rateInfo +\n    `\\n\\n📅 <i>${timestamp}</i>`;\n  \n  const n8nBaseUrl = json.n8n_base_url || 'https://n8n.autoagenda.cl';\n  let inlineKeyboard = null;\n  \n  if (workflowId && executionId && executionId !== 'N/A' && !executionId.startsWith('MANUAL_')) {\n    inlineKeyboard = {\n      inline_keyboard: [\n        [{ text: '🔍 Ver Ejecución', url: `${n8nBaseUrl}/workflow/${workflowId}/executions/${executionId}` }],\n        [{ text: '📋 Ver Workflow', url: `${n8nBaseUrl}/workflow/${workflowId}` }]\n      ]\n    };\n  } else if (workflowId) {\n    inlineKeyboard = {\n      inline_keyboard: [\n        [{ text: '📋 Ver Workflow', url: `${n8nBaseUrl}/workflow/${workflowId}` }]\n      ]\n    };\n  }\n  \n  return [{ json: {\n    ...json,\n    telegram_message: message,\n    telegram_chat_id: json.admin_chat_id,\n    telegram_inline_keyboard: inlineKeyboard,\n    telegram_disable_notification: severity === 'LOW'\n  }}];\n  \n} catch (e) {\n  const json = $input.first()?.json || {};\n  return [{ json: {\n    ...json,\n    telegram_message: `⚠️ <b>Error en AutoAgenda</b>\\n\\nNo se pudo formatear.\\n\\n<code>${(e.message || 'Unknown').substring(0, 200)}</code>`,\n    telegram_chat_id: json.admin_chat_id || '5391760292',\n    telegram_inline_keyboard: null,\n    telegram_disable_notification: false\n  }}];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_00_Global_Error_Handler';\nconst meta = () => ({ source: 'error_handler', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n\ntry {\n  const items = $input.all();\n  if (!items?.length) {\n    return [{ json: { \n      success: false, \n      error_code: 'TELEGRAM_NO_INPUT', \n      error_message: 'No data for Telegram', \n      data: null, \n      _meta: meta() \n    } }];\n  }\n\n  const inputData = items[0].json;\n  \n  // Usar datos preservados o datos de entrada\n  const data = inputData.data || {};\n  \n  // Formatear mensaje para Telegram con validacion de campos\n  const telegramMsg = {\n    chat_id: '5391760292',\n    text: `\ud83d\udea8 *CRITICAL ERROR DETECTED*\n\n*Workflow:* ${data.workflow_name || 'Unknown'}\n*Execution:* \\`${data.execution_id || 'unknown'}\\`\n\n*Message:* \\`${data.error_message || 'No error message'}\\`\n\n*Timestamp:* ${data.timestamp || DateTime.utc().toISO()}\n\n*Severity:* ${data.severity || 'CRITICAL'}\n*Environment:* ${data.environment || 'production'}\n\n[View Execution](https://n8n.serviciosroger.com/execution/${data.execution_id || ''})`,\n    parse_mode: 'Markdown'\n  };\n  \n  return [{ json: {\n    success: true,\n    error_code: null,\n    error_message: null,\n    data: {\n      telegram_message: telegramMsg,\n      original_data: data\n    },\n    _meta: meta()\n  } }];\n} catch (e) {\n  return [{ json: { \n    success: false, \n    error_code: 'TELEGRAM_FORMAT_ERROR', \n    error_message: `${WORKFLOW_ID}: ${e.message}`, \n    data: null, \n    _meta: meta() \n  } }];\n}"
       },
-      "id": "5798e216-ba4a-4062-8521-1a16cb6b422b",
-      "name": "Format Telegram Message",
+      "id": "format_telegram",
+      "name": "Format Telegram",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -3984,
-        1888
+        896,
+        208
       ]
     },
     {
       "parameters": {
-        "chatId": "={{ $json.telegram_chat_id }}",
-        "text": "={{ $json.telegram_message }}",
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.data.telegram_message.chat_id }}",
+        "text": "={{ $json.data.telegram_message.text }}",
+        "replyMarkup": "none",
         "additionalFields": {
-          "disable_notification": "={{ $json.telegram_disable_notification }}",
-          "parse_mode": "HTML"
+          "parse_mode": "={{ $json.data.telegram_message.parse_mode }}"
         }
       },
-      "id": "bebd7393-ba9b-44bf-a37a-9f11436a31f1",
-      "name": "Telegram Alert",
+      "id": "notify_admin",
+      "name": "Notify Admin",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        -3728,
-        1888
+        1120,
+        208
       ],
-      "webhookId": "b22ffd6d-654c-4d0e-b86f-e2882d51d6ff",
       "credentials": {
         "telegramApi": {
           "id": "U8P4P8JT8XwCoIzD",
           "name": "Telegram Booking"
         }
       },
-      "continueOnFail": true
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// HANDLE TELEGRAM RESULT - V2\n// ============================================\n\ntry {\n  const json = $input.first()?.json || {};\n  \n  const telegramFailed = json.error || \n    (json.ok === false) ||\n    (typeof json.message === 'string' && \n     (json.message.includes('error') || json.message.includes('Bad Request') ||\n      json.message.includes('chat not found') || json.message.includes('bot was blocked')));\n  \n  if (telegramFailed) {\n    console.error('BB_00: Telegram alert failed:', json.message || json.error);\n    \n    return [{ json: {\n      ...json,\n      telegram_sent: false,\n      telegram_error: json.message || json.error || 'Unknown Telegram error',\n      needs_email_fallback: json.can_send_email && json.severity === 'CRITICAL'\n    }}];\n  }\n  \n  return [{ json: {\n    ...json,\n    telegram_sent: true,\n    telegram_message_id: json.message_id || json.result?.message_id,\n    needs_email_fallback: false\n  }}];\n  \n} catch (e) {\n  console.error('BB_00: Handle Telegram Result error:', e.message);\n  return [{ json: {\n    ...($input.first()?.json || {}),\n    telegram_sent: false,\n    telegram_error: 'Handler exception: ' + e.message,\n    needs_email_fallback: true\n  }}];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_00_Global_Error_Handler';\nconst meta = () => ({ source: 'error_handler', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n\ntry {\n  // Obtener datos del nodo Preserve Data (antes de DB Log)\n  const preserveData = $node[\"Preserve Data\"].json;\n  \n  const data = preserveData.data || {};\n  \n  return [{ json: {\n    success: false, \n    error_code: 'GLOBAL_ERROR_CAPTURED',\n    error_message: data.error_message || 'Unexpected error captured by global handler',\n    data: {\n      workflow: data.workflow_name || 'unknown',\n      execution: data.execution_id || 'unknown'\n    },\n    _meta: meta()\n  } }];\n} catch (e) {\n  return [{ json: { \n    success: false, \n    error_code: 'INTERNAL_ERROR', \n    error_message: `${WORKFLOW_ID}: ${e.message}`, \n    data: null, \n    _meta: meta() \n  } }];\n}"
       },
-      "id": "923bf073-fe9c-4f60-9464-a5f0f5a5a33e",
-      "name": "Handle Telegram Result",
+      "id": "format_output",
+      "name": "Format Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -3472,
-        1888
-      ]
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "needs-email",
-                    "leftValue": "={{ $json.needs_email_fallback }}",
-                    "rightValue": true,
-                    "operator": {
-                      "type": "boolean",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Email Fallback"
-            }
-          ]
-        },
-        "options": {
-          "fallbackOutput": "extra",
-          "allMatchingOutputs": false
-        }
-      },
-      "id": "b70e13ae-73fb-4a08-aa2a-bb409314e81b",
-      "name": "Need Email Fallback?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        -3216,
-        1888
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// FORMAT EMAIL MESSAGE - Fallback\n// ============================================\n\nconst json = $input.first()?.json || {};\nconst TIMEZONE = json.timezone || 'America/Santiago';\n\nconst timestamp = new Date().toLocaleString('es-CL', { \n  timeZone: TIMEZONE,\n  dateStyle: 'full',\n  timeStyle: 'medium'\n});\n\nconst subject = `🔴 [CRÍTICO] Error en AutoAgenda: ${json.workflow?.name || 'Unknown'}`;\n\nconst htmlBody = `\n<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; margin: 20px; }\n    .header { background: #dc3545; color: white; padding: 15px; border-radius: 5px; }\n    .content { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; }\n    .error-box { background: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin: 10px 0; }\n    .meta { color: #6c757d; font-size: 12px; margin-top: 20px; }\n    code { background: #e9ecef; padding: 2px 6px; border-radius: 3px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h2>🔴 ERROR CRÍTICO EN AUTOAGENDA</h2>\n    <p>Telegram no disponible - Email de respaldo</p>\n  </div>\n  \n  <div class=\"content\">\n    <h3>Detalles del Error</h3>\n    <p><strong>Workflow:</strong> ${json.workflow?.name || 'UNKNOWN'}</p>\n    <p><strong>Nodo:</strong> ${json.execution?.last_node || 'UNKNOWN'}</p>\n    <p><strong>Tipo:</strong> ${json.error?.type || 'UNKNOWN'}</p>\n    <p><strong>Severidad:</strong> ${json.severity || 'UNKNOWN'}</p>\n    \n    <div class=\"error-box\">\n      <strong>Mensaje de Error:</strong><br>\n      <code>${(json.error?.message || 'Sin mensaje').substring(0, 500)}</code>\n    </div>\n    \n    <p><strong>Execution ID:</strong> <code>${json.execution?.id || 'N/A'}</code></p>\n    \n    ${json.system_warning ? '<div class=\"error-box\"><strong>Alerta de Sistema:</strong><br>' + json.system_warning + '</div>' : ''}\n    ${json.telegram_error ? '<div class=\"error-box\"><strong>Error de Telegram:</strong><br>' + json.telegram_error + '</div>' : ''}\n  </div>\n  \n  <div class=\"meta\">\n    <p>Enviado: ${timestamp}</p>\n    <p>Este es un mensaje automático de AutoAgenda.</p>\n  </div>\n</body>\n</html>\n`;\n\nreturn [{ json: {\n  ...json,\n  email_to: json.admin_email,\n  email_subject: subject,\n  email_html: htmlBody\n}}];"
-      },
-      "id": "e0257de9-2949-46bd-8dc3-b7b6ec6983e4",
-      "name": "Format Email Message",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -2960,
-        1776
-      ]
-    },
-    {
-      "parameters": {
-        "sendTo": "={{ $json.email_to }}",
-        "subject": "={{ $json.email_subject }}",
-        "message": "={{ $json.email_html }}",
-        "options": {}
-      },
-      "id": "475b20aa-bd13-4c81-935a-4da59d485c50",
-      "name": "Send Email Fallback",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        -2704,
-        1776
-      ],
-      "webhookId": "49f3c5eb-c990-4586-8fd0-a630945a3364",
-      "credentials": {
-        "gmailOAuth2": {
-          "id": "OCrDiQNCKk1LaGgS",
-          "name": "Gmail account"
-        }
-      },
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// HANDLE EMAIL RESULT\n// ============================================\n\nconst json = $input.first()?.json || {};\nconst emailSent = !json.error && (json.id || json.messageId);\n\nif (!emailSent) {\n  console.error('BB_00: Email fallback also failed:', json.error || 'Unknown');\n}\n\nreturn [{ json: {\n  ...json,\n  email_sent: emailSent,\n  email_error: emailSent ? null : (json.error || 'Unknown email error')\n}}];"
-      },
-      "id": "60a7cacc-3229-4619-860a-bde908f9a72a",
-      "name": "Handle Email Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -2448,
-        1776
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// SKIP ALERT - Rate Limit Exceeded\n// ============================================\n\nconst json = $input.first()?.json || {};\n\nconsole.warn('BB_00: Rate limit exceeded for workflow:', json.workflow?.name);\nconsole.warn('BB_00: Error count:', json.error_count_5min, '/', json.rate_limit);\n\nreturn [{ json: {\n  ...json,\n  telegram_sent: false,\n  email_sent: false,\n  skipped_reason: 'RATE_LIMIT_EXCEEDED'\n}}];"
-      },
-      "id": "dd04728f-c9d6-4528-9754-bf845f096286",
-      "name": "Skip Alert Rate Limited",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -3984,
-        2096
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// SKIP ALERT - Circuit Breaker / Other\n// ============================================\n\nconst json = $input.first()?.json || {};\n\nconst reason = json.circuit_breaker_open \n  ? 'CIRCUIT_BREAKER_OPEN' \n  : 'UNKNOWN_SKIP_REASON';\n\nconsole.warn('BB_00: Alert skipped:', reason);\n\nreturn [{ json: {\n  ...json,\n  telegram_sent: false,\n  email_sent: false,\n  skipped_reason: reason\n}}];"
-      },
-      "id": "aa210962-f334-44a1-b70b-6ca92ad4f1e4",
-      "name": "Skip Alert Other",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -3984,
-        2208
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "combine",
-        "combineBy": "combineAll",
-        "options": {}
-      },
-      "id": "19827582-6e71-44a5-829d-e260ec784476",
-      "name": "Merge Final Results",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [
-        -2112,
-        2096
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// FINAL RESULT - V2\n// ============================================\n\nconst items = $input.all();\n\nlet result = {\n  success: false,\n  handler: 'BB_00_Global_Error_Handler_V2'\n};\n\nfor (const item of items) {\n  if (item?.json) {\n    result = { ...result, ...item.json };\n  }\n}\n\nresult.success = result.db_logged || result.telegram_sent || result.email_sent;\n\ndelete result._db_params;\ndelete result._redaction_meta;\ndelete result.telegram_message;\ndelete result.telegram_inline_keyboard;\ndelete result.email_html;\n\nresult.metrics = {\n  db_logged: result.db_logged || false,\n  telegram_sent: result.telegram_sent || false,\n  email_sent: result.email_sent || false,\n  was_rate_limited: result.rate_limit_exceeded || false,\n  circuit_breaker_triggered: result.circuit_breaker_open || false,\n  db_unreachable: result.db_unreachable || false\n};\n\nresult.completed_at = new Date().toISOString();\n\nreturn [{ json: result }];"
-      },
-      "id": "e25813a9-5887-4604-89e5-3166533f2d14",
-      "name": "Final Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -1856,
-        2096
+        1344,
+        208
       ]
     }
   ],
   "connections": {
-    "Error Trigger": {
+    "Test Webhook": {
       "main": [
         [
           {
-            "node": "Validate and Parse Error",
+            "node": "Process Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "When Executed by Another Workflow": {
+    "Start": {
       "main": [
         [
           {
-            "node": "Strict Input Validation",
+            "node": "Process Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Strict Input Validation": {
+    "Process Error": {
       "main": [
         [
           {
-            "node": "Validation Passed?",
+            "node": "Preserve Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validation Passed?": {
+    "Preserve Data": {
       "main": [
         [
           {
-            "node": "Validate and Parse Error",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Return Validation Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Validate and Parse Error": {
-      "main": [
-        [
-          {
-            "node": "Redact PII",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Redact PII": {
-      "main": [
-        [
-          {
-            "node": "Classify Severity",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Classify Severity": {
-      "main": [
-        [
-          {
-            "node": "Get Config",
+            "node": "DB Log",
             "type": "main",
             "index": 0
           },
           {
-            "node": "Check Circuit Breaker",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Check Rate Limit",
+            "node": "Format Telegram",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Config": {
+    "DB Log": {
       "main": [
         [
           {
-            "node": "Merge All Data",
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Check Circuit Breaker": {
+    "Format Telegram": {
       "main": [
         [
           {
-            "node": "Merge All Data",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge All Data": {
-      "main": [
-        [
-          {
-            "node": "Process Merged Data",
+            "node": "Notify Admin",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Merged Data": {
+    "Notify Admin": {
       "main": [
         [
           {
-            "node": "Route Alerts",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Prepare DB Insert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare DB Insert": {
-      "main": [
-        [
-          {
-            "node": "Log to DB",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Log to DB": {
-      "main": [
-        [
-          {
-            "node": "Handle DB Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Handle DB Result": {
-      "main": [
-        [
-          {
-            "node": "Merge Final Results",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Route Alerts": {
-      "main": [
-        [
-          {
-            "node": "Format Telegram Message",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Skip Alert Rate Limited",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Skip Alert Other",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Telegram Message": {
-      "main": [
-        [
-          {
-            "node": "Telegram Alert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Telegram Alert": {
-      "main": [
-        [
-          {
-            "node": "Handle Telegram Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Handle Telegram Result": {
-      "main": [
-        [
-          {
-            "node": "Need Email Fallback?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Need Email Fallback?": {
-      "main": [
-        [
-          {
-            "node": "Format Email Message",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Merge Final Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Email Message": {
-      "main": [
-        [
-          {
-            "node": "Send Email Fallback",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Email Fallback": {
-      "main": [
-        [
-          {
-            "node": "Handle Email Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Handle Email Result": {
-      "main": [
-        [
-          {
-            "node": "Merge Final Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Skip Alert Rate Limited": {
-      "main": [
-        [
-          {
-            "node": "Merge Final Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Skip Alert Other": {
-      "main": [
-        [
-          {
-            "node": "Merge Final Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge Final Results": {
-      "main": [
-        [
-          {
-            "node": "Final Result",
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }

@@ -6,19 +6,83 @@
         "httpMethod": "POST",
         "path": "bb04-reschedule",
         "responseMode": "lastNode",
-        "options": {
-          "rawBody": false
-        }
+        "options": {}
       },
       "id": "test_webhook",
       "name": "\ud83e\uddea Test Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
+      "typeVersion": 2,
       "position": [
         0,
         400
       ],
       "webhookId": "bb04-reschedule-test"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger-subworkflow",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Reschedule';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\n\nconst parseDateTime = (input) => {\n  if (!input || typeof input !== 'string') return null;\n  let dt = DateTime.fromISO(input, { zone: 'utc' });\n  if (dt.isValid) return dt;\n  if (!input.endsWith('Z') && !input.includes('+') && input.includes('T')) {\n    dt = DateTime.fromISO(input + 'Z', { zone: 'utc' });\n    if (dt.isValid) return dt;\n  }\n  return null;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.booking_id || !isValidUUID(raw.booking_id)) errors.push('booking_id must be valid UUID');\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be valid UUID');\n  \n  const startDT = parseDateTime(raw.new_start_time);\n  if (!startDT) {\n    errors.push('new_start_time must be valid ISO date');\n  }\n  \n  const endDT = parseDateTime(raw.new_end_time);\n  if (!endDT) {\n    errors.push('new_end_time must be valid ISO date');\n  } else if (startDT && endDT <= startDT) {\n    errors.push('new_end_time must be after new_start_time');\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok({\n    booking_id: raw.booking_id,\n    user_id: raw.user_id,\n    new_start_time: startDT.toISO(),\n    new_end_time: endDT.toISO()\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
+      },
+      "id": "guard",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        500
+      ]
     },
     {
       "parameters": {
@@ -28,10 +92,10 @@
           "queryParameters": {
             "values": [
               {
-                "value": "={{ $json.booking_id }}"
+                "value": "={{ $json.data.booking_id }}"
               },
               {
-                "value": "={{ $json.user_id }}"
+                "value": "={{ $json.data.user_id }}"
               }
             ]
           }
@@ -40,18 +104,20 @@
       "id": "fetch_old",
       "name": "Fetch Old Booking",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "typeVersion": 2.6,
       "position": [
-        220,
+        600,
         400
       ],
       "alwaysOutputData": true
     },
     {
       "parameters": {
+        "mode": "rules",
         "rules": {
           "values": [
             {
+              "outputKey": "error",
               "conditions": {
                 "options": {
                   "caseSensitive": true,
@@ -64,8 +130,7 @@
                     "operator": {
                       "type": "boolean",
                       "operation": "true"
-                    },
-                    "rightValue": ""
+                    }
                   }
                 ],
                 "combinator": "and"
@@ -82,21 +147,21 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        440,
+        800,
         400
       ]
     },
     {
       "parameters": {
-        "jsCode": "return [{ json: { error: true, code: 'ERR_NOT_FOUND', message: 'Booking not found', status: 404 } }];"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Reschedule';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'BOOK_NOT_FOUND', error_message: 'Booking not found', data: null, _meta: meta() } }];"
       },
       "id": "not_found",
       "name": "Not Found",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
-        560
+        1000,
+        500
       ]
     },
     {
@@ -111,16 +176,16 @@
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1.3,
       "position": [
-        660,
-        240
+        1000,
+        300
       ],
       "continueOnFail": true
     },
     {
       "parameters": {
         "calendar": "primary",
-        "start": "={{ $('\ud83e\uddea Test Webhook').item.json.new_start_time }}",
-        "end": "={{ $('\ud83e\uddea Test Webhook').item.json.new_end_time }}",
+        "start": "={{ $('Guard').item.json.data.new_start_time }}",
+        "end": "={{ $('Guard').item.json.data.new_end_time }}",
         "additionalFields": {
           "summary": "Reserva Reagendada"
         }
@@ -130,10 +195,10 @@
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1.3,
       "position": [
-        880,
-        240
+        1200,
+        300
       ],
-      "continueOnFail": false
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -152,13 +217,13 @@
                 "value": "={{ $('Fetch Old Booking').item.json.service_id }}"
               },
               {
-                "value": "={{ $('\ud83e\uddea Test Webhook').item.json.new_start_time }}"
+                "value": "={{ $('Guard').item.json.data.new_start_time }}"
               },
               {
-                "value": "={{ $('\ud83e\uddea Test Webhook').item.json.new_end_time }}"
+                "value": "={{ $('Guard').item.json.data.new_end_time }}"
               },
               {
-                "value": "={{ $('GCal Create New').item.json.id }}"
+                "value": "={{ $json.id }}"
               }
             ]
           }
@@ -167,19 +232,21 @@
       "id": "insert_new",
       "name": "Insert New Booking",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "typeVersion": 2.6,
       "position": [
-        1100,
-        240
+        1400,
+        300
       ],
       "alwaysOutputData": true,
       "continueOnFail": true
     },
     {
       "parameters": {
+        "mode": "rules",
         "rules": {
           "values": [
             {
+              "outputKey": "error",
               "conditions": {
                 "options": {
                   "caseSensitive": true,
@@ -192,8 +259,7 @@
                     "operator": {
                       "type": "boolean",
                       "operation": "true"
-                    },
-                    "rightValue": ""
+                    }
                   }
                 ],
                 "combinator": "and"
@@ -210,8 +276,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        1320,
-        240
+        1600,
+        300
       ]
     },
     {
@@ -231,24 +297,24 @@
       "id": "update_old",
       "name": "Update Old Status",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "typeVersion": 2.6,
       "position": [
-        1540,
-        120
+        1800,
+        200
       ],
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const oldId = $('Fetch Old Booking').item.json.id;\nconst newId = $('Insert New Booking').item.json.id;\nconst newStart = $('Insert New Booking').item.json.start_time;\nconst newEnd = $('Insert New Booking').item.json.end_time;\n\nreturn [{ json: { success: true, action: 'reschedule', old_booking_id: oldId, new_booking_id: newId, new_start_time: newStart, new_end_time: newEnd, status: 200, message: 'Booking rescheduled successfully' } }];"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Reschedule';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const oldId = $('Fetch Old Booking').item.json.id;\n  const newData = $input.first()?.json;\n  return ok({ old_booking_id: oldId, new_booking_id: newData.id, new_start_time: newData.start_time, new_end_time: newData.end_time, action: 'rescheduled' });\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "success",
       "name": "Success",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1760,
-        120
+        2000,
+        200
       ]
     },
     {
@@ -263,28 +329,124 @@
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1.3,
       "position": [
-        1540,
-        360
+        1800,
+        400
       ],
       "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "return [{ json: { error: true, code: 'TRANSACTION_FAILED', message: 'Failed to reschedule', status: 500 } }];"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Reschedule';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'BOOK_TRANSACTION_FAILED', error_message: 'Failed to reschedule booking', data: null, _meta: meta() } }];"
       },
       "id": "error",
+      "name": "Transaction Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "content": "\ud83d\udce5 INPUT\n{ booking_id, user_id, new_start_time, new_end_time }",
+        "height": 140,
+        "width": 340,
+        "color": 6
+      },
+      "id": "sticker-input",
+      "name": "\ud83d\udce5 INPUT",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "\ud83d\udce4 OUTPUT\n{ success, error_code, error_message, data, _meta }",
+        "height": 140,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticker-output",
+      "name": "\ud83d\udce4 OUTPUT",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_04_Booking_Reschedule';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+      },
+      "id": "error-guard",
       "name": "Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1760,
-        360
+        1300,
+        600
       ]
     }
   ],
   "connections": {
     "\ud83e\uddea Test Webhook": {
       "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Guard OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Fetch Old Booking",
@@ -317,6 +479,17 @@
         [
           {
             "node": "Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Found": {
+      "main": [
+        [
+          {
+            "node": "Output",
             "type": "main",
             "index": 0
           }
@@ -385,11 +558,44 @@
         ]
       ]
     },
+    "Success": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Rollback GCal": {
       "main": [
         [
           {
-            "node": "Error",
+            "node": "Transaction Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transaction Error": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error": {
+      "main": [
+        [
+          {
+            "node": "Output",
             "type": "main",
             "index": 0
           }
@@ -398,6 +604,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }

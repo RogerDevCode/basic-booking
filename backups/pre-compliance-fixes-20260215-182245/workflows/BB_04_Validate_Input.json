@@ -1,0 +1,56 @@
+{
+  "name": "BB_04_Validate_Input",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bb04-validate",
+        "responseMode": "lastNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "test_webhook",
+      "name": "🧪 Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bb04-validate-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n    const allItems = $input.all();\n    if (!allItems || allItems.length === 0) {\n        return [{ json: { error: true, code: \"ERR_NO_DATA\", message: \"No data received\", status: 400 } }];\n    }\n    \n    const root = allItems[0].json || {};\n    const input = root.body ? root.body : root;\n    \n    const errors = [];\n    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n    const validActions = ['booking', 'cancel', 'reschedule'];\n\n    // Validar action\n    if (!input.action || !validActions.includes(input.action)) {\n        errors.push(\"Invalid action. Must be: booking, cancel, reschedule\");\n    }\n\n    // Validar UUIDs base\n    if (!input.user_id || !uuidRegex.test(input.user_id)) {\n        errors.push(\"Invalid user_id format\");\n    }\n    \n    if (!input.provider_id || !uuidRegex.test(input.provider_id)) {\n        errors.push(\"Invalid provider_id format\");\n    }\n\n    // Validaciones específicas por acción\n    if (input.action === 'booking') {\n        const start = new Date(input.start_time);\n        const end = new Date(input.end_time);\n        \n        if (isNaN(start.getTime())) errors.push(\"Invalid start_time format\");\n        if (isNaN(end.getTime())) errors.push(\"Invalid end_time format\");\n        if (start.getTime() >= end.getTime()) errors.push(\"start_time must be before end_time\");\n        \n        input.duration_min = (end - start) / (1000 * 60);\n        input.service_id = input.service_id || null;\n    }\n\n    if (input.action === 'cancel') {\n        if (!input.booking_id || !uuidRegex.test(input.booking_id)) {\n            errors.push(\"Invalid booking_id format\");\n        }\n    }\n\n    if (input.action === 'reschedule') {\n        if (!input.booking_id || !uuidRegex.test(input.booking_id)) {\n            errors.push(\"Invalid booking_id format\");\n        }\n        \n        const newStart = new Date(input.new_start_time);\n        const newEnd = new Date(input.new_end_time);\n        \n        if (isNaN(newStart.getTime())) errors.push(\"Invalid new_start_time format\");\n        if (isNaN(newEnd.getTime())) errors.push(\"Invalid new_end_time format\");\n        if (newStart.getTime() >= newEnd.getTime()) errors.push(\"new_start_time must be before new_end_time\");\n        \n        input.new_duration_min = (newEnd - newStart) / (1000 * 60);\n        input.service_id = input.service_id || null;\n    }\n\n    if (errors.length > 0) {\n        return [{ json: { error: true, code: \"ERR_VALIDATION\", details: errors, message: \"Validation failed\", status: 400 } }];\n    }\n\n    return [{ json: { ...input, error: false, validated: true, timestamp: new Date().toISOString() } }];\n\n} catch (e) { \n    console.error('[Validate Input] Error:', e.message);\n    return [{ json: { error: true, code: \"ERR_VALIDATION_CRASH\", message: \"Validation error\", details: e.message, status: 500 } }]; \n}"
+      },
+      "id": "validate_logic",
+      "name": "Validate Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "🧪 Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
+  }
+}

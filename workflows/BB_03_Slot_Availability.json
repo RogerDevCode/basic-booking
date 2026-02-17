@@ -1,0 +1,455 @@
+{
+  "name": "BB_03_Slot_Availability",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bb03-slot-availability",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "\ud83e\uddea Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "bb03-slot-availability-test"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidDateOnly = (dateStr) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr)) return false;\n  const dt = DateTime.fromISO(dateStr, { zone: 'utc' });\n  return dt.isValid;\n};\n\nconst isValidDateTime = (input) => {\n  if (!input || typeof input !== 'string') return false;\n  const dt = DateTime.fromISO(input, { zone: 'utc' });\n  return dt.isValid;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.provider_slug) errors.push('provider_slug is required');\n  \n  if (raw.target_date) {\n    if (!isValidDateOnly(raw.target_date) && !isValidDateTime(raw.target_date)) {\n      errors.push('target_date must be valid ISO date');\n    }\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  const targetDate = raw.target_date || DateTime.utc().toISODate();\n\n  return ok({\n    provider_slug: raw.provider_slug,\n    target_date: targetDate,\n    days_range: raw.days_range || 7\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
+      },
+      "id": "guard",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "H47K7umoexfwokXJ",
+        "options": {}
+      },
+      "id": "exec-provider",
+      "name": "\u2192 Get Provider Data",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-success",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-provider",
+      "name": "Provider OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "Mk0zVcooUrAoF1dT",
+        "options": {}
+      },
+      "id": "exec-schedule",
+      "name": "\u2192 Get Schedule Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-success",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-schedule",
+      "name": "Schedule OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "A0rZWiKvALsbupmh",
+        "options": {}
+      },
+      "id": "exec-slots",
+      "name": "\u2192 Calculate Slots",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-success",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-slots",
+      "name": "Slots OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'ORCH_SUBWF_FAILED', error_message: 'Subworkflow execution failed', data: null, _meta: meta() } }];"
+      },
+      "id": "error",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "\ud83e\uddea Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Guard OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "\u2192 Get Provider Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u2192 Get Provider Data": {
+      "main": [
+        [
+          {
+            "node": "Provider OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provider OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "\u2192 Get Schedule Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u2192 Get Schedule Config": {
+      "main": [
+        [
+          {
+            "node": "Schedule OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "\u2192 Calculate Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u2192 Calculate Slots": {
+      "main": [
+        [
+          {
+            "node": "Slots OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slots OK?": {
+      "main": [
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
+  }
+}

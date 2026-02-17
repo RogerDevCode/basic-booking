@@ -1,133 +1,133 @@
 {
+  "name": "BB_03_01_InputValidation",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "bb03-input-validation",
+        "responseMode": "lastNode",
         "options": {}
       },
-      "id": "2c5db195-5be4-4a47-9a75-9928802c1c72",
-      "name": "Webhook Test",
+      "id": "webhook",
+      "name": "\ud83e\uddea Test Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
-        0
+        300
       ],
-      "webhookId": "bb03-input-validation"
+      "webhookId": "bb03-input-validation-test"
     },
     {
       "parameters": {
         "inputSource": "passthrough"
       },
-      "id": "6fc869b9-76e1-42e5-bae4-633574e5731b",
+      "id": "trigger",
       "name": "Start",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
         0,
-        208
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "852d7f3a-d76e-4152-a01b-c42429114569",
-      "name": "Merge Entry",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [
-        224,
-        112
+        500
       ]
     },
     {
       "parameters": {
-        "jsCode": "/**\n * PARANOID GUARD: Input Validation\n * Validates input parameters for availability query\n * \n * Input:  { provider_slug, target_date?, days_range? }\n * Output: { success, error_code, error_message, data }\n * \n * Defaults:\n *   - target_date: today (UTC)\n *   - days_range: 14 (aligned with BOOKING_WINDOW_DAYS in app_config)\n * \n * Note: service_id not needed here (1 provider = 1 service model)\n */\ntry {\n  const input = $input.item.json;\n  const errors = [];\n\n  // === Regex Patterns ===\n  // Slug: lowercase alphanumeric + hyphens, 2-60 chars, no leading/trailing hyphens\n  const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,58}[a-z0-9]$/;\n  const DATE_REGEX = /^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$/;\n\n  // === Defaults ===\n  const DEFAULT_DAYS_RANGE = 14;\n\n  // === PROVIDER_SLUG: Required, valid slug format ===\n  if (input.provider_slug === undefined || input.provider_slug === null || input.provider_slug === '') {\n    errors.push('provider_slug is required');\n  } else if (typeof input.provider_slug !== 'string') {\n    errors.push('provider_slug must be a string');\n  } else {\n    const slug = input.provider_slug.trim().toLowerCase();\n    if (slug.length < 2 || slug.length > 60) {\n      errors.push('provider_slug must be between 2 and 60 characters');\n    } else if (!SLUG_REGEX.test(slug)) {\n      errors.push('provider_slug must contain only lowercase letters, numbers, and hyphens');\n    }\n  }\n\n  // === TARGET_DATE: Optional, YYYY-MM-DD, defaults to today UTC ===\n  let targetDate = null;\n  if (input.target_date !== undefined && input.target_date !== null && input.target_date !== '') {\n    if (typeof input.target_date !== 'string') {\n      errors.push('target_date must be a string');\n    } else if (!DATE_REGEX.test(input.target_date)) {\n      errors.push('target_date must be YYYY-MM-DD format');\n    } else {\n      // Validate it's a real calendar date\n      const [year, month, day] = input.target_date.split('-').map(Number);\n      const dateObj = new Date(Date.UTC(year, month - 1, day));\n      if (dateObj.getUTCFullYear() !== year || dateObj.getUTCMonth() !== month - 1 || dateObj.getUTCDate() !== day) {\n        errors.push('target_date is not a valid calendar date');\n      } else {\n        targetDate = input.target_date;\n      }\n    }\n  }\n\n  // Apply default: today in UTC\n  if (targetDate === null && errors.length === 0) {\n    const now = new Date();\n    targetDate = now.toISOString().split('T')[0];\n  }\n\n  // === DAYS_RANGE: Optional, integer 1-30, defaults to 14 ===\n  let daysRange = null;\n  if (input.days_range !== undefined && input.days_range !== null && input.days_range !== '') {\n    const parsed = typeof input.days_range === 'number' \n      ? input.days_range \n      : parseInt(input.days_range, 10);\n    if (isNaN(parsed) || !Number.isInteger(parsed)) {\n      errors.push('days_range must be an integer');\n    } else if (parsed < 1 || parsed > 30) {\n      errors.push('days_range must be between 1 and 30');\n    } else {\n      daysRange = parsed;\n    }\n  }\n\n  // Apply default\n  if (daysRange === null && errors.length === 0) {\n    daysRange = DEFAULT_DAYS_RANGE;\n  }\n\n  // === Return validation result ===\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'VALIDATION_FAILED',\n        error_message: errors.join('; '),\n        data: null\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      data: {\n        provider_slug: input.provider_slug.trim().toLowerCase(),\n        target_date: targetDate,\n        days_range: daysRange\n      }\n    }\n  }];\n\n} catch (e) {\n  // Never throw - always return structured error\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Paranoid Guard internal error: ' + e.message,\n      data: null\n    }\n  }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_01_InputValidation';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
-      "id": "78c3c7ed-7212-422d-ba04-6f4800c1453f",
-      "name": "Paranoid Guard",
+      "id": "guard",
+      "name": "Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        448,
-        112
+        200,
+        400
       ]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
+        "mode": "rules",
+        "rules": {
+          "values": [
             {
-              "id": "is-webhook",
-              "leftValue": "={{ $('Webhook Test').isExecuted }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
               }
             }
-          ],
-          "combinator": "and"
+          ]
         },
-        "options": {}
+        "options": {
+          "fallbackOutput": "extra"
+        }
       },
-      "id": "e2310e60-14e6-49d1-8b1f-a2e8bc7c6550",
-      "name": "IF: From Webhook?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
       "position": [
-        672,
-        112
+        400,
+        400
       ]
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "X-Workflow",
-                "value": "BB_03_01_InputValidation"
-              }
-            ]
-          }
-        }
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_01_InputValidation';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
-      "id": "b24b2311-f4ac-45c1-ab82-bfa100b7a0f4",
-      "name": "Respond Webhook",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        880,
-        0
+        600,
+        300
       ]
     },
     {
       "parameters": {},
-      "id": "01f637e0-cf40-4c43-b4b9-d97da5b3256e",
+      "id": "output",
       "name": "Output",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        880,
-        208
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_01_InputValidation';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+      },
+      "id": "error-guard",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        500
       ]
     }
   ],
   "connections": {
-    "Webhook Test": {
+    "\ud83e\uddea Test Webhook": {
       "main": [
         [
           {
-            "node": "Merge Entry",
+            "node": "Guard",
             "type": "main",
             "index": 0
           }
@@ -138,44 +138,55 @@
       "main": [
         [
           {
-            "node": "Merge Entry",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge Entry": {
-      "main": [
-        [
-          {
-            "node": "Paranoid Guard",
+            "node": "Guard",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Paranoid Guard": {
+    "Guard": {
       "main": [
         [
           {
-            "node": "IF: From Webhook?",
+            "node": "Guard OK?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "IF: From Webhook?": {
+    "Guard OK?": {
       "main": [
         [
           {
-            "node": "Respond Webhook",
+            "node": "Error",
             "type": "main",
             "index": 0
           }
         ],
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error": {
+      "main": [
         [
           {
             "node": "Output",
@@ -186,16 +197,10 @@
       ]
     }
   },
-  "pinData": {
-    "Start": [
-      {
-        "provider_slug": "test-pro",
-        "days_range": 3,
-        "target_date": "2026-03-01"
-      }
-    ]
-  },
-  "meta": {
-    "instanceId": "37e1af476793fff8d83d04975043d462dd665b71d5f42903a4862a8e314c32a9"
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }

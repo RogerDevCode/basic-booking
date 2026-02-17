@@ -5,304 +5,202 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "bb03-schedule-config",
+        "responseMode": "lastNode",
         "options": {}
       },
-      "id": "webhook-test-03",
-      "name": "Webhook Test",
+      "id": "webhook",
+      "name": "\ud83e\uddea Test Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 160],
-      "webhookId": "bb03-schedule-config"
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bb03-schedule-config-test"
     },
     {
       "parameters": {
         "inputSource": "passthrough"
       },
-      "id": "trigger-03",
+      "id": "trigger",
       "name": "Start",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [0, 360]
+      "position": [
+        0,
+        500
+      ]
     },
     {
       "parameters": {
-        "mode": "combine",
-        "combineBy": "combineAll",
-        "options": {}
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_03_ScheduleConfig';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
-      "id": "merge-entry-03",
-      "name": "Merge Entry",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [220, 260]
-    },
-    {
-      "parameters": {
-        "jsCode": "/**\n * PARANOID GUARD: Schedule Config Input\n * Validates all required fields for schedule configuration\n */\ntry {\n  const input = $input.item.json;\n  const errors = [];\n  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n\n  // Required fields\n  if (!input.provider_id || !UUID_REGEX.test(input.provider_id)) {\n    errors.push('provider_id must be valid UUID');\n  }\n  if (!Array.isArray(input.schedules)) {\n    errors.push('schedules must be an array');\n  }\n  if (typeof input.slot_duration_mins !== 'number' || input.slot_duration_mins < 5) {\n    errors.push('slot_duration_mins must be a number >= 5');\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'VALIDATION_FAILED',\n        error_message: errors.join('; '),\n        data: null\n      }\n    }];\n  }\n\n  // Pass through validated data\n  return [{ json: { ...input, _guard_passed: true } }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Paranoid Guard error: ' + e.message,\n      data: null\n    }\n  }];\n}"
-      },
-      "id": "paranoid-guard-03",
-      "name": "Paranoid Guard",
+      "id": "guard",
+      "name": "Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 260]
+      "position": [
+        200,
+        400
+      ]
     },
     {
       "parameters": {
+        "mode": "rules",
         "rules": {
           "values": [
             {
+              "outputKey": "error",
               "conditions": {
-                "options": { "caseSensitive": true, "version": 3 },
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
                 "conditions": [
-                  { "id": "guard-failed", "leftValue": "={{ $json.success === false }}", "operator": { "type": "boolean", "operation": "true" }}
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
                 ],
                 "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Guard Failed"
-            }
-          ]
-        },
-        "options": { "fallbackOutput": "extra" }
-      },
-      "id": "switch-guard-03",
-      "name": "Switch: Guard OK?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [660, 260]
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": { "caseSensitive": true, "version": 3 },
-                "conditions": [
-                  { "id": "no-schedules", "leftValue": "={{ $json.schedules?.length || 0 }}", "operator": { "type": "number", "operation": "equals", "rightValue": 0 }}
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "No Schedule"
-            }
-          ]
-        },
-        "options": { "fallbackOutput": "extra" }
-      },
-      "id": "switch-has-schedule-03",
-      "name": "Switch: Has Schedules?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [880, 340]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO audit_logs (\n  table_name, record_id, action, event_type, event_data, performed_by, created_at\n) VALUES (\n  'schedules',\n  '{{ $json.provider_id }}',\n  'SELECT',\n  'no_schedule_found',\n  '{{ JSON.stringify({ workflow: \"BB_03_03_ScheduleConfig\" }) }}'::jsonb,\n  'system',\n  NOW()\n);",
-        "options": {
-          "queryTimeout": 5000
-        }
-      },
-      "id": "audit-no-schedule-03",
-      "name": "Audit: No Schedule",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [1100, 240],
-      "alwaysOutputData": true,
-      "credentials": {
-        "postgres": {
-          "id": "99BnrzwZQDhYU6Ly",
-          "name": "Postgres Booking"
-        }
-      },
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{\n  json: {\n    success: false,\n    error_code: 'NO_SCHEDULE',\n    error_message: 'Provider has no active schedules configured',\n    data: null\n  }\n}];"
-      },
-      "id": "format-no-schedule-03",
-      "name": "Format: No Schedule",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1320, 240]
-    },
-    {
-      "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "nuQRvaWJAUCYjVSk",
-          "mode": "id"
-        },
-        "options": {}
-      },
-      "id": "exec-validate-config-03",
-      "name": "Execute: Validate Config",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.1,
-      "position": [1100, 420],
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": { "caseSensitive": true, "version": 3 },
-                "conditions": [
-                  { "id": "config-error", "leftValue": "={{ $json.success }}", "operator": { "type": "boolean", "operation": "false" }}
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Config Error"
-            }
-          ]
-        },
-        "options": { "fallbackOutput": "extra" }
-      },
-      "id": "switch-config-valid-03",
-      "name": "Switch: Config Valid?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [1320, 420]
-    },
-    {
-      "parameters": {
-        "jsCode": "try {\n  const input = $input.item.json;\n  return [{\n    json: {\n      success: false,\n      error_code: input.error_code || 'INVALID_CONFIG',\n      error_message: input.error_message || 'Configuration validation failed',\n      data: null\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error formatting config error',\n      data: null\n    }\n  }];\n}"
-      },
-      "id": "format-config-error-03",
-      "name": "Format: Config Error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1540, 340]
-    },
-    {
-      "parameters": {
-        "jsCode": "/**\n * Apply Validated Config\n * Calculates date range for slot availability query\n */\ntry {\n  const scheduleData = $('Paranoid Guard').item.json;\n  const configResult = $input.item.json;\n\n  const { timezone, booking_window_days, min_advance_hours } = configResult.validated_config || {};\n  const tz = timezone || scheduleData.timezone || 'UTC';\n  const windowDays = booking_window_days || scheduleData.booking_window_days || 14;\n  const minAdvanceHours = min_advance_hours || scheduleData.min_advance_hours || 2;\n  const daysRange = Math.min(scheduleData.days_range || windowDays, windowDays);\n  const targetDate = scheduleData.target_date || null;\n\n  // Calculate date range in UTC\n  const now = new Date();\n  const baseDateStr = targetDate || now.toLocaleDateString('en-CA', { timeZone: tz });\n  const startDateUtc = new Date(baseDateStr + 'T00:00:00Z');\n  const endDateUtc = new Date(startDateUtc);\n  endDateUtc.setUTCDate(endDateUtc.getUTCDate() + (daysRange - 1));\n  const queryEndUtc = new Date(endDateUtc);\n  queryEndUtc.setUTCDate(queryEndUtc.getUTCDate() + 1);\n\n  const startISO = startDateUtc.toISOString().split('T')[0];\n  const endISO = endDateUtc.toISOString().split('T')[0];\n\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      data: {\n        provider_id: scheduleData.provider_id,\n        provider_name: scheduleData.provider_name,\n        provider_slug: scheduleData.provider_slug,\n        slot_duration_mins: scheduleData.slot_duration_mins,\n        timezone: tz,\n        min_advance_hours: minAdvanceHours,\n        max_slots: scheduleData.max_slots_per_query || 1000,\n        schedules: scheduleData.schedules,\n        date_range: {\n          from: startISO,\n          to: endISO,\n          total_days: daysRange\n        },\n        query_start: startISO + 'T00:00:00Z',\n        query_end: queryEndUtc.toISOString(),\n        service_id: scheduleData.service_id\n      }\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error applying validated config: ' + e.message,\n      data: null\n    }\n  }];\n}"
-      },
-      "id": "apply-config-03",
-      "name": "Apply: Validated Config",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1540, 500]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "is-webhook",
-              "leftValue": "={{ $('Webhook Test').isExecuted }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
               }
             }
-          ],
-          "combinator": "and"
+          ]
         },
-        "options": {}
+        "options": {
+          "fallbackOutput": "extra"
+        }
       },
-      "id": "if-webhook-03",
-      "name": "IF: From Webhook?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [1760, 340]
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        400
+      ]
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "X-Workflow",
-                "value": "BB_03_03_ScheduleConfig"
-              }
-            ]
-          }
-        }
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_03_ScheduleConfig';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
-      "id": "respond-webhook-03",
-      "name": "Respond Webhook",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1980, 240]
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ]
     },
     {
       "parameters": {},
-      "id": "output-03",
+      "id": "output",
       "name": "Output",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1980, 440]
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_03_ScheduleConfig';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+      },
+      "id": "error-guard",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        500
+      ]
     }
   ],
   "connections": {
-    "Webhook Test": {
-      "main": [[{"node": "Merge Entry", "type": "main", "index": 0}]]
+    "\ud83e\uddea Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Start": {
-      "main": [[{"node": "Merge Entry", "type": "main", "index": 1}]]
-    },
-    "Merge Entry": {
-      "main": [[{"node": "Paranoid Guard", "type": "main", "index": 0}]]
-    },
-    "Paranoid Guard": {
-      "main": [[{"node": "Switch: Guard OK?", "type": "main", "index": 0}]]
-    },
-    "Switch: Guard OK?": {
       "main": [
-        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
-        [{"node": "Switch: Has Schedules?", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Switch: Has Schedules?": {
+    "Guard": {
       "main": [
-        [{"node": "Audit: No Schedule", "type": "main", "index": 0}],
-        [{"node": "Execute: Validate Config", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Guard OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Audit: No Schedule": {
-      "main": [[{"node": "Format: No Schedule", "type": "main", "index": 0}]]
-    },
-    "Format: No Schedule": {
-      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
-    },
-    "Execute: Validate Config": {
-      "main": [[{"node": "Switch: Config Valid?", "type": "main", "index": 0}]]
-    },
-    "Switch: Config Valid?": {
+    "Guard OK?": {
       "main": [
-        [{"node": "Format: Config Error", "type": "main", "index": 0}],
-        [{"node": "Apply: Validated Config", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Format: Config Error": {
-      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
-    },
-    "Apply: Validated Config": {
-      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
-    },
-    "IF: From Webhook?": {
+    "Success": {
       "main": [
-        [{"node": "Respond Webhook", "type": "main", "index": 0}],
-        [{"node": "Output", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }

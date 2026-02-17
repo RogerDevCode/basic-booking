@@ -1,0 +1,224 @@
+{
+  "name": "BB_04_Booking_Cancel",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bb04-cancel",
+        "responseMode": "lastNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "test_webhook",
+      "name": "\ud83e\uddea Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bb04-cancel-test"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, user_id, provider_id, gcal_event_id, status FROM bookings WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL AND status = 'confirmed'",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.booking_id }}"
+              },
+              {
+                "value": "={{ $json.user_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "fetch_booking",
+      "name": "Fetch Booking",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        220,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "has_id",
+                    "leftValue": "={{ !!$json.id }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    },
+                    "rightValue": ""
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "check_found",
+      "name": "Found?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: true, code: 'ERR_NOT_FOUND', message: 'Booking not found or not cancelable', status: 404 } }];"
+      },
+      "id": "not_found",
+      "name": "Not Found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendar": "primary",
+        "eventId": "={{ $json.gcal_event_id }}",
+        "options": {}
+      },
+      "id": "gcal_delete",
+      "name": "GCal Delete",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        660,
+        160
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE bookings SET status = 'cancelled', updated_at = NOW() WHERE id = $1 RETURNING id, status",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "update_status",
+      "name": "Update Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        880,
+        160
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { success: true, action: 'cancel', booking_id: $json.id, status: 200, message: 'Booking cancelled successfully' } }];"
+      },
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "\ud83e\uddea Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Booking": {
+      "main": [
+        [
+          {
+            "node": "Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Found?": {
+      "main": [
+        [
+          {
+            "node": "GCal Delete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GCal Delete": {
+      "main": [
+        [
+          {
+            "node": "Update Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status": {
+      "main": [
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

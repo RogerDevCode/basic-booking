@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict BNbZHwU5KStetqF8OjPvNmUMCygiAGlYMowbmO16IxB64XkeBcx97lbJNQncfQZ
+\restrict 2OKAu9V3JyKMYd4hTekzDNj4lfdNIQjtnKY7PpJmd3jo880BJfFS2kUnx3O8bpt
 
 -- Dumped from database version 17.7 (bdd1736)
 -- Dumped by pg_dump version 17.7 (Ubuntu 17.7-0ubuntu0.25.10.1)
@@ -18,6 +18,15 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: error_handling; Type: SCHEMA; Schema: -; Owner: neondb_owner
+--
+
+CREATE SCHEMA error_handling;
+
+
+ALTER SCHEMA error_handling OWNER TO neondb_owner;
 
 --
 -- Name: neon_auth; Type: SCHEMA; Schema: -; Owner: neon_auth
@@ -204,6 +213,159 @@ CREATE TYPE public.user_role AS ENUM (
 
 
 ALTER TYPE public.user_role OWNER TO neondb_owner;
+
+--
+-- Name: check_error_recurrence(character varying, character varying, text, integer, boolean); Type: FUNCTION; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE FUNCTION error_handling.check_error_recurrence(p_workflow_name character varying, p_error_type character varying, p_error_message text DEFAULT NULL::text, p_time_window_minutes integer DEFAULT 10, p_use_fingerprint boolean DEFAULT true) RETURNS TABLE(occurrence_count integer, is_recurring boolean, severity_recommendation character varying, first_occurrence timestamp with time zone, last_occurrence timestamp with time zone)
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_fingerprint VARCHAR(64);
+    v_count INTEGER;
+    v_first TIMESTAMP WITH TIME ZONE;
+    v_last TIMESTAMP WITH TIME ZONE;
+    v_severity VARCHAR(20);
+BEGIN
+    IF p_use_fingerprint AND p_error_message IS NOT NULL THEN
+        v_fingerprint := error_handling.generate_error_fingerprint(
+            p_workflow_name, 
+            p_error_type, 
+            p_error_message
+        );
+        
+        SELECT 
+            COUNT(*),
+            MIN(created_at),
+            MAX(created_at)
+        INTO v_count, v_first, v_last
+        FROM error_handling.error_logs
+        WHERE error_fingerprint = v_fingerprint
+          AND created_at > NOW() - (p_time_window_minutes || ' minutes')::INTERVAL;
+    ELSE
+        SELECT 
+            COUNT(*),
+            MIN(created_at),
+            MAX(created_at)
+        INTO v_count, v_first, v_last
+        FROM error_handling.error_logs
+        WHERE workflow_name = p_workflow_name
+          AND error_type = p_error_type
+          AND created_at > NOW() - (p_time_window_minutes || ' minutes')::INTERVAL;
+    END IF;
+    
+    v_severity := CASE 
+        WHEN v_count >= 20 THEN 'CRITICAL'
+        WHEN v_count >= 10 THEN 'HIGH'
+        WHEN v_count >= 3 THEN 'MEDIUM'
+        ELSE 'LOW'
+    END;
+    
+    RETURN QUERY SELECT 
+        COALESCE(v_count, 0),
+        COALESCE(v_count, 0) >= 3,
+        v_severity,
+        v_first,
+        v_last;
+END;
+$$;
+
+
+ALTER FUNCTION error_handling.check_error_recurrence(p_workflow_name character varying, p_error_type character varying, p_error_message text, p_time_window_minutes integer, p_use_fingerprint boolean) OWNER TO neondb_owner;
+
+--
+-- Name: cleanup_old_errors(integer); Type: FUNCTION; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE FUNCTION error_handling.cleanup_old_errors(p_days_to_keep integer DEFAULT 30) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_deleted_count INTEGER;
+BEGIN
+    DELETE FROM error_handling.error_logs
+    WHERE created_at < NOW() - (p_days_to_keep || ' days')::INTERVAL
+      AND resolved = TRUE;
+    
+    GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+    
+    RETURN v_deleted_count;
+END;
+$$;
+
+
+ALTER FUNCTION error_handling.cleanup_old_errors(p_days_to_keep integer) OWNER TO neondb_owner;
+
+--
+-- Name: count_error_recurrences(character varying, character varying, integer); Type: FUNCTION; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE FUNCTION error_handling.count_error_recurrences(p_workflow_name character varying, p_error_type character varying, p_time_window_minutes integer DEFAULT 10) RETURNS integer
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    v_count INTEGER;
+BEGIN
+    SELECT COUNT(*)
+    INTO v_count
+    FROM error_handling.error_logs
+    WHERE workflow_name = p_workflow_name
+      AND error_type = p_error_type
+      AND created_at > NOW() - (p_time_window_minutes || ' minutes')::INTERVAL;
+    
+    RETURN COALESCE(v_count, 0);
+END;
+$$;
+
+
+ALTER FUNCTION error_handling.count_error_recurrences(p_workflow_name character varying, p_error_type character varying, p_time_window_minutes integer) OWNER TO neondb_owner;
+
+--
+-- Name: generate_error_fingerprint(text, text, text); Type: FUNCTION; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE FUNCTION error_handling.generate_error_fingerprint(p_workflow_name text, p_error_type text, p_error_message text) RETURNS character varying
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE
+    v_normalized_message TEXT;
+    v_fingerprint_source TEXT;
+BEGIN
+    v_normalized_message := p_error_message;
+    v_normalized_message := REGEXP_REPLACE(v_normalized_message, '\d+', 'N', 'g');
+    v_normalized_message := REGEXP_REPLACE(v_normalized_message, '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', 'UUID', 'gi');
+    v_normalized_message := REGEXP_REPLACE(v_normalized_message, '[a-f0-9]{32,}', 'HASH', 'gi');
+    v_normalized_message := REGEXP_REPLACE(v_normalized_message, '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', 'IP', 'g');
+    v_normalized_message := REGEXP_REPLACE(v_normalized_message, '\s+', ' ', 'g');
+    v_normalized_message := LEFT(LOWER(TRIM(v_normalized_message)), 200);
+    
+    v_fingerprint_source := COALESCE(p_workflow_name, '') || ':' || 
+                           COALESCE(p_error_type, '') || ':' || 
+                           COALESCE(v_normalized_message, '');
+    
+    RETURN 'fp_' || MD5(v_fingerprint_source);
+END;
+$$;
+
+
+ALTER FUNCTION error_handling.generate_error_fingerprint(p_workflow_name text, p_error_type text, p_error_message text) OWNER TO neondb_owner;
+
+--
+-- Name: update_updated_at(); Type: FUNCTION; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE FUNCTION error_handling.update_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION error_handling.update_updated_at() OWNER TO neondb_owner;
 
 --
 -- Name: acquire_booking_lock(uuid, timestamp with time zone, integer); Type: FUNCTION; Schema: public; Owner: neondb_owner
@@ -884,6 +1046,168 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: error_aggregations; Type: TABLE; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE TABLE error_handling.error_aggregations (
+    id bigint NOT NULL,
+    workflow_name character varying(255) NOT NULL,
+    error_type character varying(100) NOT NULL,
+    error_fingerprint character varying(64),
+    time_window_start timestamp with time zone NOT NULL,
+    time_window_end timestamp with time zone NOT NULL,
+    occurrence_count integer DEFAULT 0,
+    severity_max character varying(20),
+    first_occurrence timestamp with time zone,
+    last_occurrence timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE error_handling.error_aggregations OWNER TO neondb_owner;
+
+--
+-- Name: error_aggregations_id_seq; Type: SEQUENCE; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE SEQUENCE error_handling.error_aggregations_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE error_handling.error_aggregations_id_seq OWNER TO neondb_owner;
+
+--
+-- Name: error_aggregations_id_seq; Type: SEQUENCE OWNED BY; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER SEQUENCE error_handling.error_aggregations_id_seq OWNED BY error_handling.error_aggregations.id;
+
+
+--
+-- Name: error_logs; Type: TABLE; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE TABLE error_handling.error_logs (
+    id bigint NOT NULL,
+    workflow_name character varying(255) NOT NULL,
+    error_type character varying(100) NOT NULL,
+    error_message text NOT NULL,
+    error_fingerprint character varying(64),
+    severity character varying(20) DEFAULT 'MEDIUM'::character varying,
+    occurrences integer DEFAULT 1,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    input_data jsonb,
+    stack_trace text,
+    user_id character varying(100),
+    session_id character varying(100),
+    environment character varying(50) DEFAULT 'production'::character varying,
+    resolved boolean DEFAULT false,
+    resolved_at timestamp with time zone,
+    resolved_by character varying(100),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE error_handling.error_logs OWNER TO neondb_owner;
+
+--
+-- Name: error_logs_id_seq; Type: SEQUENCE; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE SEQUENCE error_handling.error_logs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE error_handling.error_logs_id_seq OWNER TO neondb_owner;
+
+--
+-- Name: error_logs_id_seq; Type: SEQUENCE OWNED BY; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER SEQUENCE error_handling.error_logs_id_seq OWNED BY error_handling.error_logs.id;
+
+
+--
+-- Name: recurrence_config; Type: TABLE; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE TABLE error_handling.recurrence_config (
+    id integer NOT NULL,
+    workflow_name character varying(255),
+    error_type character varying(100),
+    time_window_minutes integer DEFAULT 10,
+    threshold_low integer DEFAULT 3,
+    threshold_medium integer DEFAULT 5,
+    threshold_high integer DEFAULT 10,
+    threshold_critical integer DEFAULT 20,
+    enabled boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE error_handling.recurrence_config OWNER TO neondb_owner;
+
+--
+-- Name: recurrence_config_id_seq; Type: SEQUENCE; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE SEQUENCE error_handling.recurrence_config_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE error_handling.recurrence_config_id_seq OWNER TO neondb_owner;
+
+--
+-- Name: recurrence_config_id_seq; Type: SEQUENCE OWNED BY; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER SEQUENCE error_handling.recurrence_config_id_seq OWNED BY error_handling.recurrence_config.id;
+
+
+--
+-- Name: v_recurring_errors; Type: VIEW; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE VIEW error_handling.v_recurring_errors AS
+ SELECT workflow_name,
+    error_type,
+    error_fingerprint,
+    severity,
+    count(*) AS occurrence_count,
+    max(created_at) AS last_occurrence,
+    min(created_at) AS first_occurrence,
+    array_agg(DISTINCT environment) AS environments,
+        CASE
+            WHEN (count(*) >= 20) THEN 'CRITICAL'::text
+            WHEN (count(*) >= 10) THEN 'HIGH'::text
+            WHEN (count(*) >= 3) THEN 'MEDIUM'::text
+            ELSE 'LOW'::text
+        END AS suggested_severity
+   FROM error_handling.error_logs el
+  WHERE ((created_at > (now() - '00:10:00'::interval)) AND (resolved = false))
+  GROUP BY workflow_name, error_type, error_fingerprint, severity
+ HAVING (count(*) >= 3);
+
+
+ALTER VIEW error_handling.v_recurring_errors OWNER TO neondb_owner;
+
+--
 -- Name: account; Type: TABLE; Schema: neon_auth; Owner: neon_auth
 --
 
@@ -1462,6 +1786,52 @@ COMMENT ON TABLE public.users IS 'Global users table. Users can be customers (ro
 --
 
 COMMENT ON COLUMN public.users.rut IS 'Chilean national ID (RUT). Format: 12345678-K. Nullable for international users.';
+
+
+--
+-- Name: error_aggregations id; Type: DEFAULT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.error_aggregations ALTER COLUMN id SET DEFAULT nextval('error_handling.error_aggregations_id_seq'::regclass);
+
+
+--
+-- Name: error_logs id; Type: DEFAULT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.error_logs ALTER COLUMN id SET DEFAULT nextval('error_handling.error_logs_id_seq'::regclass);
+
+
+--
+-- Name: recurrence_config id; Type: DEFAULT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.recurrence_config ALTER COLUMN id SET DEFAULT nextval('error_handling.recurrence_config_id_seq'::regclass);
+
+
+--
+-- Data for Name: error_aggregations; Type: TABLE DATA; Schema: error_handling; Owner: neondb_owner
+--
+
+COPY error_handling.error_aggregations (id, workflow_name, error_type, error_fingerprint, time_window_start, time_window_end, occurrence_count, severity_max, first_occurrence, last_occurrence, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: error_logs; Type: TABLE DATA; Schema: error_handling; Owner: neondb_owner
+--
+
+COPY error_handling.error_logs (id, workflow_name, error_type, error_message, error_fingerprint, severity, occurrences, metadata, input_data, stack_trace, user_id, session_id, environment, resolved, resolved_at, resolved_by, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: recurrence_config; Type: TABLE DATA; Schema: error_handling; Owner: neondb_owner
+--
+
+COPY error_handling.recurrence_config (id, workflow_name, error_type, time_window_minutes, threshold_low, threshold_medium, threshold_high, threshold_critical, enabled, created_at, updated_at) FROM stdin;
+1	DEFAULT	DEFAULT	10	3	5	10	20	t	2026-02-13 23:45:06.83855+00	2026-02-13 23:45:06.83855+00
+\.
 
 
 --
@@ -2229,6 +2599,21 @@ fc659999-9d35-414d-b03a-314c1db88b0c	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{
 30086ca9-0efe-4339-bf52-5156299f2cee	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:12:50.062406+00	\N	f	\N
 bc72d504-56de-4ee4-ae1f-3feca30d10cf	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:13:23.507942+00	\N	f	\N
 3d3aea8b-536b-4ad6-b67e-5589d29e9cc8	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 15:13:48.942061+00	\N	f	\N
+3a3d1579-91a3-4248-b835-98a3af29d5f0	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:52:35.163193+00	\N	f	\N
+f90faf95-904e-428c-97d7-e619fbc1c38d	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:52:35.203357+00	\N	f	\N
+7114924f-560e-473a-a734-d675e9752fee	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:52:35.263289+00	\N	f	\N
+7686f718-1d94-477e-8243-59ace52d4a9a	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:52:35.940478+00	\N	f	\N
+d14d7052-bfa6-4a77-bf27-a6c63a5e564c	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:52:38.245378+00	\N	f	\N
+234fbab1-d43d-4a65-989b-37ade23d19d6	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:53:02.888129+00	\N	f	\N
+fcce4887-c2db-40a8-85a5-efebd69dc320	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:53:03.001479+00	\N	f	\N
+39a3601f-9362-4833-8411-dc9a4e1eaef8	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:53:03.441716+00	\N	f	\N
+6a73f0a9-4ae6-427d-b862-8f4f95b9f522	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:53:04.106799+00	\N	f	\N
+00198a17-602d-4dec-a7a9-2a68d473907a	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:53:05.286573+00	\N	f	\N
+542ac337-3e7a-4165-a2db-bdf4f803d894	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 22:59:53.017229+00	\N	f	\N
+2bab8fd3-f222-498f-a64b-f45869f1c455	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 23:08:36.775167+00	\N	f	\N
+c49a3660-4d6f-4429-9dd5-d8868f67a793	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 23:12:02.914508+00	\N	f	\N
+fd9b3b72-86e5-4af1-8348-b5e627c44046	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 23:14:58.043939+00	\N	f	\N
+6d27cd1e-5f21-4589-98c5-97e51f68b820	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 23:15:25.59013+00	\N	f	\N
 \.
 
 
@@ -2264,6 +2649,67 @@ b1e95f01-49b4-423c-b530-b4dc265e9082	2000010	Zoë	Almohávar	\N	\N	\N	user	es	{}
 6daa9018-1df4-4dc3-a761-100e1ae11a09	123456789	Test	User	test_user	\N	\N	user	es	{}	2026-01-26 21:27:45.344063+00	2026-01-26 21:27:45.344063+00	\N	\N	\N
 f6a7b8c9-d0e1-2345-fabc-456789012345	999000999	Test Booker	\N	\N	\N	\N	user	es	{}	2026-02-10 13:17:46.32768+00	2026-02-10 13:17:46.32768+00	\N	\N	\N
 \.
+
+
+--
+-- Name: error_aggregations_id_seq; Type: SEQUENCE SET; Schema: error_handling; Owner: neondb_owner
+--
+
+SELECT pg_catalog.setval('error_handling.error_aggregations_id_seq', 1, false);
+
+
+--
+-- Name: error_logs_id_seq; Type: SEQUENCE SET; Schema: error_handling; Owner: neondb_owner
+--
+
+SELECT pg_catalog.setval('error_handling.error_logs_id_seq', 1, false);
+
+
+--
+-- Name: recurrence_config_id_seq; Type: SEQUENCE SET; Schema: error_handling; Owner: neondb_owner
+--
+
+SELECT pg_catalog.setval('error_handling.recurrence_config_id_seq', 1, true);
+
+
+--
+-- Name: error_aggregations error_aggregations_pkey; Type: CONSTRAINT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.error_aggregations
+    ADD CONSTRAINT error_aggregations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: error_logs error_logs_pkey; Type: CONSTRAINT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.error_logs
+    ADD CONSTRAINT error_logs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: recurrence_config recurrence_config_pkey; Type: CONSTRAINT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.recurrence_config
+    ADD CONSTRAINT recurrence_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: error_aggregations uk_error_aggregation; Type: CONSTRAINT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.error_aggregations
+    ADD CONSTRAINT uk_error_aggregation UNIQUE (workflow_name, error_type, error_fingerprint, time_window_start);
+
+
+--
+-- Name: recurrence_config uk_recurrence_config; Type: CONSTRAINT; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY error_handling.recurrence_config
+    ADD CONSTRAINT uk_recurrence_config UNIQUE (workflow_name, error_type);
 
 
 --
@@ -2536,6 +2982,55 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_telegram_id_key UNIQUE (telegram_id);
+
+
+--
+-- Name: idx_error_aggregations_lookup; Type: INDEX; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_aggregations_lookup ON error_handling.error_aggregations USING btree (workflow_name, error_type, error_fingerprint, time_window_end DESC);
+
+
+--
+-- Name: idx_error_logs_created_at; Type: INDEX; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_logs_created_at ON error_handling.error_logs USING btree (created_at DESC);
+
+
+--
+-- Name: idx_error_logs_environment; Type: INDEX; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_logs_environment ON error_handling.error_logs USING btree (environment, created_at DESC);
+
+
+--
+-- Name: idx_error_logs_fingerprint; Type: INDEX; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_logs_fingerprint ON error_handling.error_logs USING btree (error_fingerprint, created_at DESC) WHERE (error_fingerprint IS NOT NULL);
+
+
+--
+-- Name: idx_error_logs_high_severity; Type: INDEX; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_logs_high_severity ON error_handling.error_logs USING btree (created_at DESC) WHERE (((severity)::text = ANY ((ARRAY['HIGH'::character varying, 'CRITICAL'::character varying])::text[])) AND (resolved = false));
+
+
+--
+-- Name: idx_error_logs_recurrence; Type: INDEX; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_logs_recurrence ON error_handling.error_logs USING btree (workflow_name, error_type, created_at DESC);
+
+
+--
+-- Name: idx_error_logs_unresolved; Type: INDEX; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE INDEX idx_error_logs_unresolved ON error_handling.error_logs USING btree (workflow_name, created_at DESC) WHERE (resolved = false);
 
 
 --
@@ -2896,6 +3391,13 @@ CREATE UNIQUE INDEX unique_booking_slot ON public.bookings USING btree (provider
 
 
 --
+-- Name: error_logs trg_error_logs_updated_at; Type: TRIGGER; Schema: error_handling; Owner: neondb_owner
+--
+
+CREATE TRIGGER trg_error_logs_updated_at BEFORE UPDATE ON error_handling.error_logs FOR EACH ROW EXECUTE FUNCTION error_handling.update_updated_at();
+
+
+--
 -- Name: admin_users trg_admin_users_timestamp; Type: TRIGGER; Schema: public; Owner: neondb_owner
 --
 
@@ -3082,6 +3584,118 @@ ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: SCHEMA error_handling; Type: ACL; Schema: -; Owner: neondb_owner
+--
+
+GRANT USAGE ON SCHEMA error_handling TO n8n_user;
+
+
+--
+-- Name: FUNCTION check_error_recurrence(p_workflow_name character varying, p_error_type character varying, p_error_message text, p_time_window_minutes integer, p_use_fingerprint boolean); Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT ALL ON FUNCTION error_handling.check_error_recurrence(p_workflow_name character varying, p_error_type character varying, p_error_message text, p_time_window_minutes integer, p_use_fingerprint boolean) TO n8n_user;
+
+
+--
+-- Name: FUNCTION cleanup_old_errors(p_days_to_keep integer); Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT ALL ON FUNCTION error_handling.cleanup_old_errors(p_days_to_keep integer) TO n8n_user;
+
+
+--
+-- Name: FUNCTION count_error_recurrences(p_workflow_name character varying, p_error_type character varying, p_time_window_minutes integer); Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT ALL ON FUNCTION error_handling.count_error_recurrences(p_workflow_name character varying, p_error_type character varying, p_time_window_minutes integer) TO n8n_user;
+
+
+--
+-- Name: FUNCTION generate_error_fingerprint(p_workflow_name text, p_error_type text, p_error_message text); Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT ALL ON FUNCTION error_handling.generate_error_fingerprint(p_workflow_name text, p_error_type text, p_error_message text) TO n8n_user;
+
+
+--
+-- Name: FUNCTION update_updated_at(); Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT ALL ON FUNCTION error_handling.update_updated_at() TO n8n_user;
+
+
+--
+-- Name: TABLE error_aggregations; Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE error_handling.error_aggregations TO n8n_user;
+
+
+--
+-- Name: SEQUENCE error_aggregations_id_seq; Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT SELECT,USAGE ON SEQUENCE error_handling.error_aggregations_id_seq TO n8n_user;
+
+
+--
+-- Name: TABLE error_logs; Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE error_handling.error_logs TO n8n_user;
+
+
+--
+-- Name: SEQUENCE error_logs_id_seq; Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT SELECT,USAGE ON SEQUENCE error_handling.error_logs_id_seq TO n8n_user;
+
+
+--
+-- Name: TABLE recurrence_config; Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE error_handling.recurrence_config TO n8n_user;
+
+
+--
+-- Name: SEQUENCE recurrence_config_id_seq; Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT SELECT,USAGE ON SEQUENCE error_handling.recurrence_config_id_seq TO n8n_user;
+
+
+--
+-- Name: TABLE v_recurring_errors; Type: ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE error_handling.v_recurring_errors TO n8n_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner IN SCHEMA error_handling GRANT SELECT,USAGE ON SEQUENCES TO n8n_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner IN SCHEMA error_handling GRANT ALL ON FUNCTIONS TO n8n_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: error_handling; Owner: neondb_owner
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner IN SCHEMA error_handling GRANT SELECT,INSERT,DELETE,UPDATE ON TABLES TO n8n_user;
+
+
+--
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: cloud_admin
 --
 
@@ -3099,5 +3713,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE cloud_admin IN SCHEMA public GRANT ALL ON TABL
 -- PostgreSQL database dump complete
 --
 
-\unrestrict BNbZHwU5KStetqF8OjPvNmUMCygiAGlYMowbmO16IxB64XkeBcx97lbJNQncfQZ
+\unrestrict 2OKAu9V3JyKMYd4hTekzDNj4lfdNIQjtnKY7PpJmd3jo880BJfFS2kUnx3O8bpt
 

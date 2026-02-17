@@ -1,0 +1,399 @@
+{
+  "name": "BB_03_00_Main",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bb03-main",
+        "options": {}
+      },
+      "id": "webhook-test-main",
+      "name": "Webhook Test",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 160],
+      "webhookId": "bb03-main"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger-main",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 360]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "merge-entry-main",
+      "name": "Merge Entry",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [220, 260]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "M69obyY12codmOYj",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-01-input",
+      "name": "01: Input Validation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [440, 260]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "version": 3 },
+                "conditions": [
+                  { "id": "step-failed", "leftValue": "={{ $json.success }}", "operator": { "type": "boolean", "operation": "false" }}
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Error"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-01",
+      "name": "Switch: 01 OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [660, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare input for Provider Data\nconst data = $input.item.json.data;\nreturn [{ json: data }];"
+      },
+      "id": "prep-02",
+      "name": "Prep: 02 Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 340]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "m26OrwGIbHkYpTRZ",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-02-provider",
+      "name": "02: Provider Data",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1100, 340]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "version": 3 },
+                "conditions": [
+                  { "id": "step-failed", "leftValue": "={{ $json.success }}", "operator": { "type": "boolean", "operation": "false" }}
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Error"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-02",
+      "name": "Switch: 02 OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1320, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare input for Schedule Config\n// Merge provider data with original input parameters\ntry {\n  const providerData = $input.item.json.data;\n  const originalInput = $('01: Input Validation').item.json.data;\n\n  return [{\n    json: {\n      ...providerData,\n      target_date: originalInput.target_date,\n      days_range: originalInput.days_range\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error preparing schedule input: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "prep-03",
+      "name": "Prep: 03 Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 420]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "aUPKQQmOYR9o9PJd",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-03-schedule",
+      "name": "03: Schedule Config",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1760, 420]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "version": 3 },
+                "conditions": [
+                  { "id": "step-failed", "leftValue": "={{ $json.success }}", "operator": { "type": "boolean", "operation": "false" }}
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Error"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-03",
+      "name": "Switch: 03 OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1980, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare input for Bookings Data\nconst scheduleData = $input.item.json.data;\nreturn [{\n  json: {\n    provider_id: scheduleData.provider_id,\n    query_start: scheduleData.query_start,\n    query_end: scheduleData.query_end\n  }\n}];"
+      },
+      "id": "prep-04",
+      "name": "Prep: 04 Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 500]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "uXh3BWv2RKnquoJO",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-04-bookings",
+      "name": "04: Bookings Data",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2420, 500]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "version": 3 },
+                "conditions": [
+                  { "id": "step-failed", "leftValue": "={{ $json.success }}", "operator": { "type": "boolean", "operation": "false" }}
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Error"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-04",
+      "name": "Switch: 04 OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2640, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Prepare final input for Slot Calculation\n * Merges schedule config with bookings data\n */\ntry {\n  const scheduleConfig = $('03: Schedule Config').item.json.data;\n  const bookingsResult = $input.item.json.data;\n\n  return [{\n    json: {\n      provider_id: scheduleConfig.provider_id,\n      provider_name: scheduleConfig.provider_name,\n      provider_slug: scheduleConfig.provider_slug,\n      slot_duration_mins: scheduleConfig.slot_duration_mins,\n      timezone: scheduleConfig.timezone,\n      min_advance_hours: scheduleConfig.min_advance_hours,\n      max_slots: scheduleConfig.max_slots,\n      schedules: scheduleConfig.schedules,\n      date_range: scheduleConfig.date_range,\n      bookings: bookingsResult.bookings || [],\n      service_id: scheduleConfig.service_id\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error preparing slot calculation input: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "prep-05",
+      "name": "Prep: 05 Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 580]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "eeJrLLXBElLWCZGM",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "exec-05-slots",
+      "name": "05: Calculate Slots",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [3080, 580]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Format Final Response\n * Ensures consistent output structure\n */\ntry {\n  const input = $input.item.json;\n\n  // Already structured response\n  if (typeof input.success !== 'undefined') {\n    return [{ json: input }];\n  }\n\n  // Wrap raw data in success response\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      data: input.data || input\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error formatting final response: ' + e.message,\n      data: null\n    }\n  }];\n}"
+      },
+      "id": "format-response",
+      "name": "Format: Final Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, 580]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-webhook",
+              "leftValue": "={{ $('Webhook Test').isExecuted }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-webhook-main",
+      "name": "IF: From Webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3520, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "X-Workflow",
+                "value": "BB_03_00_Main"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook-main",
+      "name": "Respond Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3740, 300]
+    },
+    {
+      "parameters": {},
+      "id": "output-main",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3740, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Test": {
+      "main": [[{"node": "Merge Entry", "type": "main", "index": 0}]]
+    },
+    "Start": {
+      "main": [[{"node": "Merge Entry", "type": "main", "index": 1}]]
+    },
+    "Merge Entry": {
+      "main": [[{"node": "01: Input Validation", "type": "main", "index": 0}]]
+    },
+    "01: Input Validation": {
+      "main": [[{"node": "Switch: 01 OK?", "type": "main", "index": 0}]]
+    },
+    "Switch: 01 OK?": {
+      "main": [
+        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
+        [{"node": "Prep: 02 Input", "type": "main", "index": 0}]
+      ]
+    },
+    "Prep: 02 Input": {
+      "main": [[{"node": "02: Provider Data", "type": "main", "index": 0}]]
+    },
+    "02: Provider Data": {
+      "main": [[{"node": "Switch: 02 OK?", "type": "main", "index": 0}]]
+    },
+    "Switch: 02 OK?": {
+      "main": [
+        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
+        [{"node": "Prep: 03 Input", "type": "main", "index": 0}]
+      ]
+    },
+    "Prep: 03 Input": {
+      "main": [[{"node": "03: Schedule Config", "type": "main", "index": 0}]]
+    },
+    "03: Schedule Config": {
+      "main": [[{"node": "Switch: 03 OK?", "type": "main", "index": 0}]]
+    },
+    "Switch: 03 OK?": {
+      "main": [
+        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
+        [{"node": "Prep: 04 Input", "type": "main", "index": 0}]
+      ]
+    },
+    "Prep: 04 Input": {
+      "main": [[{"node": "04: Bookings Data", "type": "main", "index": 0}]]
+    },
+    "04: Bookings Data": {
+      "main": [[{"node": "Switch: 04 OK?", "type": "main", "index": 0}]]
+    },
+    "Switch: 04 OK?": {
+      "main": [
+        [{"node": "IF: From Webhook?", "type": "main", "index": 0}],
+        [{"node": "Prep: 05 Input", "type": "main", "index": 0}]
+      ]
+    },
+    "Prep: 05 Input": {
+      "main": [[{"node": "05: Calculate Slots", "type": "main", "index": 0}]]
+    },
+    "05: Calculate Slots": {
+      "main": [[{"node": "Format: Final Response", "type": "main", "index": 0}]]
+    },
+    "Format: Final Response": {
+      "main": [[{"node": "IF: From Webhook?", "type": "main", "index": 0}]]
+    },
+    "IF: From Webhook?": {
+      "main": [
+        [{"node": "Respond Webhook", "type": "main", "index": 0}],
+        [{"node": "Output", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "_Za9GzqB2cS9HVwBglt43",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

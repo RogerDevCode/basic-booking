@@ -1,0 +1,164 @@
+{
+  "name": "BB_08_JWT_Auth_Helper",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "sub_trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n    const input = $input.item.json;\n    \n    // Check for Authorization header\n    const authHeader = input.headers?.authorization || input.headers?.Authorization;\n    \n    if (!authHeader) {\n        return [{\n            json: {\n                error: true,\n                status: 401,\n                message: 'UNAUTHORIZED: Missing Authorization header',\n                code: 'MISSING_AUTH_HEADER'\n            }\n        }];\n    }\n    \n    // Extract Bearer token\n    if (!authHeader.startsWith('Bearer ')) {\n        return [{\n            json: {\n                error: true,\n                status: 401,\n                message: 'UNAUTHORIZED: Authorization header must start with Bearer',\n                code: 'INVALID_AUTH_FORMAT'\n            }\n        }];\n    }\n    \n    const token = authHeader.substring(7);\n    \n    if (!token || token.trim() === '') {\n        return [{\n            json: {\n                error: true,\n                status: 401,\n                message: 'UNAUTHORIZED: Token is empty',\n                code: 'EMPTY_TOKEN'\n            }\n        }];\n    }\n    \n    return [{\n        json: {\n            token: token,\n            validated: true\n        }\n    }];\n} catch (e) {\n    return [{\n        json: {\n            error: true,\n            status: 500,\n            message: 'JWT validation error: ' + e.message,\n            code: 'VALIDATION_ERROR'\n        }\n    }];\n}"
+      },
+      "id": "extract_token",
+      "name": "Extract Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n    const token = $json.token;\n    const secret = $vars.JWT_SECRET || 'AutoAgenda_Secret_Key_2026_Secure';\n    \n    // Split JWT into parts\n    const parts = token.split('.');\n    if (parts.length !== 3) {\n        throw new Error('Invalid JWT format');\n    }\n    \n    // Decode payload (middle part)\n    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));\n    \n    // Verify expiry\n    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {\n        return [{\n            json: {\n                error: true,\n                status: 401,\n                message: 'UNAUTHORIZED: Token has expired',\n                code: 'TOKEN_EXPIRED'\n            }\n        }];\n    \n    // Verify role (must be admin)\n    if (payload.role !== 'admin') {\n        return [{\n            json: {\n                error: true,\n                status: 403,\n                message: 'FORBIDDEN: Admin access required',\n                code: 'INSUFFICIENT_PERMISSIONS'\n            }\n        }];\n    \n    // Return decoded payload\n    return [{\n        json: {\n            valid: true,\n            user: {\n                id: payload.user_id,\n                email: payload.email,\n                role: payload.role,\n                // tenant_id removed for single-tenant\n            },\n            token_exp: payload.exp\n        }\n    }];\n} catch (e) {\n    return [{\n        json: {\n            error: true,\n            status: 401,\n            message: 'UNAUTHORIZED: Invalid token - ' + e.message,\n            code: 'INVALID_TOKEN'\n        }\n    }];\n}"
+      },
+      "id": "verify_token",
+      "name": "Verify Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 1
+        }
+      },
+      "id": "check_valid",
+      "name": "Token Valid?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        600,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const errorData = $json;\nreturn [{\n    json: {\n        error: true,\n        status: errorData.status,\n        message: errorData.message,\n        code: errorData.code\n    }\n}];"
+      },
+      "id": "return_error",
+      "name": "Return Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const user = $json.user;\nreturn [{\n    json: {\n        authenticated: true,\n        user: user,\n        message: 'Authentication successful'\n    }\n}];"
+      },
+      "id": "return_success",
+      "name": "Return Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Token": {
+      "main": [
+        [
+          {
+            "node": "Verify Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token": {
+      "main": [
+        [
+          {
+            "node": "Token Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token Valid?": {
+      "main": [
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

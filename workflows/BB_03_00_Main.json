@@ -9,7 +9,7 @@
         "options": {}
       },
       "id": "webhook",
-      "name": "🧪 Test Webhook",
+      "name": "\ud83e\uddea Test Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_00_Main';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\nconst isValidDate = (dateStr) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr)) return false;\n  const [year, month, day] = dateStr.split('-').map(Number);\n  const date = new Date(year, month - 1, day);\n  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n  \n  if (!raw.provider_slug) {\n    errors.push('provider_slug is required');\n  } else if (typeof raw.provider_slug !== 'string') {\n    errors.push(`provider_slug must be a string: ${sanitize(String(raw.provider_slug))}`);\n  } else if (raw.provider_slug.length > 100) {\n    errors.push('provider_slug too long (max 100 chars)');\n  }\n  \n  if (raw.target_date) {\n    if (typeof raw.target_date !== 'string') {\n      errors.push('target_date must be a string');\n    } else if (!isValidDate(raw.target_date)) {\n      errors.push('target_date must be a valid YYYY-MM-DD date');\n    }\n  }\n  \n  if (raw.days_range !== undefined) {\n    if (typeof raw.days_range !== 'number' || raw.days_range < 1 || raw.days_range > 365) {\n      errors.push('days_range must be a number between 1 and 365');\n    }\n  }\n  \n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n  \n  return ok({\n    provider_slug: sanitize(String(raw.provider_slug)),\n    target_date: sanitize(raw.target_date) || new Date().toISOString().split('T')[0],\n    days_range: raw.days_range || 7\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_00_Main';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\nconst isValidDateOnly = (dateStr) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr)) return false;\n  const dt = DateTime.fromISO(dateStr, { zone: 'utc' });\n  return dt.isValid;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n  \n  if (!raw.provider_slug) {\n    errors.push('provider_slug is required');\n  } else if (typeof raw.provider_slug !== 'string') {\n    errors.push(`provider_slug must be a string: ${sanitize(String(raw.provider_slug))}`);\n  } else if (raw.provider_slug.length > 100) {\n    errors.push('provider_slug too long (max 100 chars)');\n  }\n  \n  if (raw.target_date) {\n    if (typeof raw.target_date !== 'string') {\n      errors.push('target_date must be a string');\n    } else if (!isValidDateOnly(raw.target_date)) {\n      errors.push('target_date must be a valid YYYY-MM-DD date');\n    }\n  }\n  \n  if (raw.days_range !== undefined) {\n    if (typeof raw.days_range !== 'number' || raw.days_range < 1 || raw.days_range > 365) {\n      errors.push('days_range must be a number between 1 and 365');\n    }\n  }\n  \n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n  \n  const targetDate = raw.target_date || DateTime.utc().toISODate();\n  \n  return ok({\n    provider_slug: sanitize(String(raw.provider_slug)),\n    target_date: targetDate,\n    days_range: raw.days_range || 7\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -86,7 +86,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_00_Main';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_00_Main';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "success",
       "name": "Success",
@@ -99,7 +99,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_00_Main';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'ORCH_SUBWF_FAILED', error_message: 'Subworkflow execution failed', data: null, _meta: meta() } }];"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_03_00_Main';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'ORCH_SUBWF_FAILED', error_message: 'Subworkflow execution failed', data: null, _meta: meta() } }];"
       },
       "id": "error",
       "name": "Error",
@@ -123,7 +123,7 @@
     }
   ],
   "connections": {
-    "🧪 Test Webhook": {
+    "\ud83e\uddea Test Webhook": {
       "main": [
         [
           {

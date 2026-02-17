@@ -1,0 +1,608 @@
+{
+  "name": "BB_03_02_ProviderData",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bb03-provider-data",
+        "options": {}
+      },
+      "id": "webhook-test-02",
+      "name": "Webhook Test",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        160
+      ],
+      "webhookId": "bb03-provider-data"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger-02",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-entry-02",
+      "name": "Merge Entry",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        220,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * PARANOID GUARD: Provider Data Input\n * Validates provider_id and service_id format\n */\nconst WORKFLOW_ID = 'BB_03_02_ProviderData';\n\ntry {\n  const input = $input.item.json;\n  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n  const errors = [];\n\n  if (!input.provider_id || !UUID_REGEX.test(input.provider_id)) {\n    errors.push('provider_id must be a valid UUID v4');\n  }\n\n  if (input.service_id && !UUID_REGEX.test(input.service_id)) {\n    errors.push('service_id must be a valid UUID v4');\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'VALIDATION_FAILED',\n        error_message: errors.join('; '),\n        data: null,\n        _guard_failed: true\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      provider_id: input.provider_id,\n      service_id: input.service_id || null,\n      _guard_passed: true\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Paranoid Guard error: ' + e.message,\n      data: null,\n      _guard_failed: true\n    }\n  }];\n}"
+      },
+      "id": "paranoid-guard-02",
+      "name": "Paranoid Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "guard-failed",
+                    "leftValue": "={{ $json._guard_failed }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Guard Failed"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-guard-02",
+      "name": "Switch: Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        660,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- AUDIT: Log access attempt BEFORE data retrieval\nINSERT INTO audit_logs (\n  table_name, record_id, action, event_type, event_data, performed_by, created_at\n) VALUES (\n  'providers',\n  '{{ $json.provider_id }}',\n  'SELECT',\n  'availability_check_start',\n  '{{ JSON.stringify({ service_id: $json.service_id, workflow: \"BB_03_02_ProviderData\" }) }}'::jsonb,\n  'system',\n  NOW()\n) RETURNING id;",
+        "options": {
+          "queryTimeout": 10000
+        }
+      },
+      "id": "audit-before-02",
+      "name": "Audit: Before Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        340
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  p.id AS provider_id,\n  p.name AS provider_name,\n  p.slug AS provider_slug,\n  p.slot_duration_mins,\n  svc.duration_minutes AS service_duration_mins,\n  COALESCE(\n    json_agg(\n      json_build_object(\n        'day_of_week', s.day_of_week,\n        'start_time', s.start_time::text,\n        'end_time', s.end_time::text\n      )\n    ) FILTER (WHERE s.id IS NOT NULL),\n    '[]'\n  )::text AS schedules_json,\n  (SELECT value FROM app_config WHERE key = 'TIMEZONE') AS timezone,\n  (SELECT value::int FROM app_config WHERE key = 'BOOKING_WINDOW_DAYS') AS booking_window_days,\n  (SELECT value::int FROM app_config WHERE key = 'MIN_BOOKING_ADVANCE_HOURS') AS min_advance_hours,\n  (SELECT value::int FROM app_config WHERE key = 'MAX_SLOTS_PER_QUERY') AS max_slots_per_query\nFROM providers p\nLEFT JOIN schedules s ON s.provider_id = p.id AND s.is_active = true\nLEFT JOIN services svc ON svc.id = NULLIF('{{ $('Paranoid Guard').item.json.service_id }}', 'null')::uuid\n  AND svc.provider_id = p.id\n  AND svc.active = true\nWHERE p.id = '{{ $('Paranoid Guard').item.json.provider_id }}'\n  AND p.deleted_at IS NULL\nGROUP BY p.id, p.name, p.slug, p.slot_duration_mins, svc.duration_minutes;",
+        "options": {
+          "queryTimeout": 10000
+        }
+      },
+      "id": "db-provider-02",
+      "name": "DB: Get Provider + Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        340
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "has-error",
+                    "leftValue": "={{ $json.error }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "DB Error"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-db-error-02",
+      "name": "Switch: DB Error?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1320,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Prepare error data for BB_00 Global Error Handler\n * Redact any PII before sending\n */\nconst WORKFLOW_ID = 'BB_03_02_ProviderData';\n\ntry {\n  const input = $input.item.json;\n  const providerId = $('Paranoid Guard').item.json.provider_id;\n  \n  return [{\n    json: {\n      workflow_name: 'BB_03_02_ProviderData',\n      node_name: 'DB: Get Provider + Config',\n      error_type: 'DATABASE_ERROR',\n      error_message: input.message || 'Unknown database error',\n      severity: 'HIGH',\n      context: {\n        provider_id: providerId,\n        // PII redacted - no user data logged\n        timestamp: new Date().toISOString()\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      workflow_name: 'BB_03_02_ProviderData',\n      node_name: 'Prepare Error Data',\n      error_type: 'INTERNAL_ERROR',\n      error_message: 'Failed to prepare error data',\n      severity: 'CRITICAL',\n      context: {}\n    }\n  }];\n}"
+      },
+      "id": "prepare-error-02",
+      "name": "Prepare Error Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "_Za9GzqB2cS9HVwBglt43",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "notify-error-02",
+      "name": "BB_00: Notify Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        240
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    success: false,\n    error_code: 'DATABASE_ERROR',\n    error_message: 'Error accessing database. Please try again later.',\n    data: null,\n        _meta: {\n          source: 'subworkflow',\n          timestamp: new Date().toISOString(),\n          workflow_id: WORKFLOW_ID\n        }\n  }\n}];"
+      },
+      "id": "format-db-error-02",
+      "name": "Format: DB Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "no-provider",
+                    "leftValue": "={{ $json.provider_id }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "empty"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Not Found"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-provider-found-02",
+      "name": "Switch: Provider Found?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1540,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (\n  table_name, record_id, action, event_type, event_data, performed_by, created_at\n) VALUES (\n  'providers',\n  '{{ $('Paranoid Guard').item.json.provider_id }}',\n  'SELECT',\n  'provider_not_found',\n  '{{ JSON.stringify({ workflow: \"BB_03_02_ProviderData\" }) }}'::jsonb,\n  'system',\n  NOW()\n);",
+        "options": {
+          "queryTimeout": 5000
+        }
+      },
+      "id": "audit-not-found-02",
+      "name": "Audit: Provider Not Found",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        340
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly",
+          "name": "Postgres Booking"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    success: false,\n    error_code: 'PROVIDER_NOT_FOUND',\n    error_message: 'Provider not found or inactive',\n    data: null,\n        _meta: {\n          source: 'subworkflow',\n          timestamp: new Date().toISOString(),\n          workflow_id: WORKFLOW_ID\n        }\n  }\n}];"
+      },
+      "id": "format-not-found-02",
+      "name": "Format: Not Found Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Process Provider Data\n * Validates service if requested, structures output\n */\nconst WORKFLOW_ID = 'BB_03_02_ProviderData';\n\ntry {\n  const provider = $input.item.json;\n  const inputData = $('Paranoid Guard').item.json;\n  const schedules = JSON.parse(provider.schedules_json || '[]');\n  const serviceId = inputData.service_id || null;\n  const serviceDuration = provider.service_duration_mins ? parseInt(provider.service_duration_mins, 10) : null;\n\n  // Validate service if requested\n  if (serviceId && !serviceDuration) {\n    return [{\n      json: {\n        success: false,\n        error_code: 'SERVICE_NOT_FOUND',\n        error_message: 'Service not found or inactive for this provider',\n        data: null,\n        _meta: {\n          source: 'subworkflow',\n          timestamp: new Date().toISOString(),\n          workflow_id: WORKFLOW_ID\n        }\n      }\n    }];\n  }\n\n  // Calculate effective slot duration\n  const slotDuration = serviceDuration || parseInt(provider.slot_duration_mins || '30', 10);\n\n  return [{\n    json: {\n      success: true,\n      error_code: null,\n      error_message: null,\n      data: {\n        provider_id: provider.provider_id,\n        provider_name: provider.provider_name,\n        provider_slug: provider.provider_slug,\n        slot_duration_mins: slotDuration,\n        service_duration_mins: serviceDuration,\n        schedules: schedules,\n        timezone: provider.timezone || 'UTC',\n        booking_window_days: parseInt(provider.booking_window_days || '14', 10),\n        min_advance_hours: parseInt(provider.min_advance_hours || '2', 10),\n        max_slots_per_query: parseInt(provider.max_slots_per_query || '1000', 10),\n        service_id: serviceId\n      },\n        _meta: {\n          source: 'subworkflow',\n          timestamp: new Date().toISOString(),\n          workflow_id: WORKFLOW_ID\n        }\n    }\n  }];\n\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error_code: 'INTERNAL_ERROR',\n      error_message: 'Error processing provider data: ' + e.message,\n      data: null,\n        _meta: {\n          source: 'subworkflow',\n          timestamp: new Date().toISOString(),\n          workflow_id: WORKFLOW_ID\n        }\n    }\n  }];\n}"
+      },
+      "id": "process-provider-02",
+      "name": "Process: Provider Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-webhook",
+              "leftValue": "={{ $('Webhook Test').isExecuted }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-webhook-02",
+      "name": "IF: From Webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "X-Workflow",
+                "value": "BB_03_02_ProviderData"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook-02",
+      "name": "Respond Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output-02",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Test": {
+      "main": [
+        [
+          {
+            "node": "Merge Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Merge Entry",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Entry": {
+      "main": [
+        [
+          {
+            "node": "Paranoid Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paranoid Guard": {
+      "main": [
+        [
+          {
+            "node": "Switch: Guard OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: Guard OK?": {
+      "main": [
+        [
+          {
+            "node": "IF: From Webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Audit: Before Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit: Before Query": {
+      "main": [
+        [
+          {
+            "node": "DB: Get Provider + Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Provider + Config": {
+      "main": [
+        [
+          {
+            "node": "Switch: DB Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: DB Error?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Error Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch: Provider Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Data": {
+      "main": [
+        [
+          {
+            "node": "BB_00: Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BB_00: Notify Error": {
+      "main": [
+        [
+          {
+            "node": "Format: DB Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format: DB Error Response": {
+      "main": [
+        [
+          {
+            "node": "IF: From Webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: Provider Found?": {
+      "main": [
+        [
+          {
+            "node": "Audit: Provider Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process: Provider Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit: Provider Not Found": {
+      "main": [
+        [
+          {
+            "node": "Format: Not Found Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format: Not Found Response": {
+      "main": [
+        [
+          {
+            "node": "IF: From Webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process: Provider Data": {
+      "main": [
+        [
+          {
+            "node": "IF: From Webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: From Webhook?": {
+      "main": [
+        [
+          {
+            "node": "Respond Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
+  }
+}

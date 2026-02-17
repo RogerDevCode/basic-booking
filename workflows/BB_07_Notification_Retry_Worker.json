@@ -3,293 +3,193 @@
   "nodes": [
     {
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 5
-            }
-          ]
-        }
+        "httpMethod": "POST",
+        "path": "notification-retry",
+        "responseMode": "lastNode",
+        "options": {}
       },
-      "id": "cron",
-      "name": "Cron",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
+      "id": "webhook",
+      "name": "\ud83e\uddea Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         0,
-        0
+        300
+      ],
+      "webhookId": "notification-retry-test"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        500
       ]
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT id, booking_id, user_id, message, priority, status, retry_count, error_message, created_at, updated_at FROM notification_queue WHERE status = 'pending' AND retry_count < 3 AND created_at > NOW() - INTERVAL '1 hour' ORDER BY priority DESC, created_at ASC LIMIT 50;"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_07_Notification_Retry_Worker';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
-      "id": "fetch_pending",
-      "name": "Fetch Pending",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        250,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const items = $input.all();\nif (!items || items.length === 0) {\n    return [{ json: { no_pending: true, message: 'No pending notifications' } }];\n}\n\nreturn items.map(item => ({\n    json: {\n        ...item.json,\n        retry_attempt: item.json.retry_count + 1\n    }\n}));"
-      },
-      "id": "prepare_retries",
-      "name": "Prepare Retries",
+      "id": "guard",
+      "name": "Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        450,
-        0
+        200,
+        400
       ]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
-        "chatId": "={{ $json.user_id }}",
-        "text": "={{ $json.message }}",
-        "additionalFields": {
-          "parse_mode": "HTML"
-        }
-      },
-      "id": "send_telegram",
-      "name": "Send Telegram",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        650,
-        0
-      ],
-      "credentials": {
-        "telegramApi": {
-          "id": "PLACEHOLDER",
-          "name": "Telegram Bot AutoAgenda"
-        }
-      },
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const items = $input.all();\nconst results = items.map(item => {\n    const json = item.json;\n    const success = !json.error && json.success !== false;\n    \n    return {\n        id: json.id,\n        success: success,\n        error_message: json.error || null,\n        retry_attempt: json.retry_attempt\n    };\n});\n\nreturn [{\n    json: {\n        results: results,\n        total: results.length,\n        successful: results.filter(r => r.success).length,\n        failed: results.filter(r => !r.success).length\n    }\n}];"
-      },
-      "id": "analyze_results",
-      "name": "Analyze Results",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        850,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "update",
-        "schema": "public",
-        "table": "notification_queue",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "status": "sent"
-          }
-        },
-        "whereClause": {
+        "mode": "rules",
+        "rules": {
           "values": [
             {
-              "column": "id",
-              "operator": "equal",
-              "value": "={{ $json.id }}"
+              "outputKey": "error",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "check-error",
+                    "leftValue": "={{ $json.success }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
             }
           ]
         },
-        "options": {}
-      },
-      "id": "mark_sent",
-      "name": "Mark Sent",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        1050,
-        -100
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
+        "options": {
+          "fallbackOutput": "extra"
         }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "update",
-        "schema": "public",
-        "table": "notification_queue",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "retry_count": "={{ $json.retry_attempt }}",
-            "status": "failed",
-            "error_message": "={{ $json.error_message }}",
-            "updated_at": "={{ $now.toISO() }}"
-          }
-        },
-        "whereClause": {
-          "values": [
-            {
-              "column": "id",
-              "operator": "equal",
-              "value": "={{ $json.id }}"
-            }
-          ]
-        },
-        "options": {}
       },
-      "id": "mark_failed",
-      "name": "Mark Failed",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "id": "switch-guard",
+      "name": "Guard OK?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
       "position": [
-        1050,
-        100
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "aa8wMkQBBzGHkJzn",
-          "name": "Postgres Neon"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const analysis = $node[\"Analyze Results\"].json;\nreturn [{\n    json: {\n        status: 'processed',\n        processed: analysis.total,\n        sent: analysis.successful,\n        failed: analysis.failed,\n        timestamp: new Date().toISOString()\n    }\n}];"
-      },
-      "id": "build_summary",
-      "name": "Build Summary",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1250,
-        0
+        400,
+        400
       ]
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\ntry {\n    const logEntry = {\n      timestamp: new Date().toISOString(),\n      itemsCount: items.length,\n      preview: JSON.stringify(items[0]?.json).slice(0, 200)\n    };\n    console.log('[WF-OUTPUT]', JSON.stringify(logEntry));\n} catch(e) {}\nreturn items;"
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_07_Notification_Retry_Worker';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
-      "id": "log_summary",
-      "name": "Log Summary",
+      "id": "success",
+      "name": "Success",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1450,
-        0
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        800,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst WORKFLOW_ID = 'BB_07_Notification_Retry_Worker';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.utc().toISO(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+      },
+      "id": "error-guard",
+      "name": "Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        500
       ]
     }
   ],
   "connections": {
-    "Cron": {
+    "\ud83e\uddea Test Webhook": {
       "main": [
         [
           {
-            "node": "Fetch Pending",
+            "node": "Guard",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fetch Pending": {
+    "Start": {
       "main": [
         [
           {
-            "node": "Prepare Retries",
+            "node": "Guard",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Retries": {
+    "Guard": {
       "main": [
         [
           {
-            "node": "Send Telegram",
+            "node": "Guard OK?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send Telegram": {
+    "Guard OK?": {
       "main": [
         [
           {
-            "node": "Analyze Results",
+            "node": "Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Analyze Results": {
+    "Success": {
       "main": [
         [
           {
-            "node": "Mark Sent",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Mark Failed",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Build Summary",
+            "node": "Output",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Mark Sent": {
+    "Error": {
       "main": [
         [
           {
-            "node": "Log Summary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Mark Failed": {
-      "main": [
-        [
-          {
-            "node": "Log Summary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Summary": {
-      "main": [
-        [
-          {
-            "node": "Log Summary",
+            "node": "Output",
             "type": "main",
             "index": 0
           }
@@ -298,6 +198,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
   }
 }
