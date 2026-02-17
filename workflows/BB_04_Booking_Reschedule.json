@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Reschedule';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\n\nconst parseDateTime = (input) => {\n  if (!input || typeof input !== 'string') return null;\n  let dt = DateTime.fromISO(input, { zone: 'utc' });\n  if (dt.isValid) return dt;\n  if (!input.endsWith('Z') && !input.includes('+') && input.includes('T')) {\n    dt = DateTime.fromISO(input + 'Z', { zone: 'utc' });\n    if (dt.isValid) return dt;\n  }\n  return null;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.booking_id || !isValidUUID(raw.booking_id)) errors.push('booking_id must be valid UUID');\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be valid UUID');\n  \n  const startDT = parseDateTime(raw.new_start_time);\n  if (!startDT) {\n    errors.push('new_start_time must be valid ISO date');\n  }\n  \n  const endDT = parseDateTime(raw.new_end_time);\n  if (!endDT) {\n    errors.push('new_end_time must be valid ISO date');\n  } else if (startDT && endDT <= startDT) {\n    errors.push('new_end_time must be after new_start_time');\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok({\n    booking_id: raw.booking_id,\n    user_id: raw.user_id,\n    new_start_time: startDT.toISO(),\n    new_end_time: endDT.toISO()\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
+        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Reschedule';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\n\nconst parseDateTime = (input) => {\n  if (!input || typeof input !== 'string') return null;\n  const d = new Date(input);\n  if (isNaN(d.getTime())) return null;\n  return d;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.booking_id || !isValidUUID(raw.booking_id)) errors.push('booking_id must be valid UUID');\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be valid UUID');\n  \n  const startDT = parseDateTime(raw.new_start_time);\n  if (!startDT) {\n    errors.push('new_start_time must be valid ISO date');\n  }\n  \n  const endDT = parseDateTime(raw.new_end_time);\n  if (!endDT) {\n    errors.push('new_end_time must be valid ISO date');\n  } else if (startDT && endDT <= startDT) {\n    errors.push('new_end_time must be after new_start_time');\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok({\n    booking_id: raw.booking_id,\n    user_id: raw.user_id,\n    new_start_time: startDT.toISOString(),\n    new_end_time: endDT.toISOString()\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -109,7 +109,12 @@
         600,
         400
       ],
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
     },
     {
       "parameters": {
@@ -179,7 +184,12 @@
         1000,
         300
       ],
-      "continueOnFail": true
+      "continueOnFail": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "mT5XZfEaeP1fqjl4"
+        }
+      }
     },
     {
       "parameters": {
@@ -198,7 +208,12 @@
         1200,
         300
       ],
-      "continueOnFail": true
+      "continueOnFail": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "mT5XZfEaeP1fqjl4"
+        }
+      }
     },
     {
       "parameters": {
@@ -238,7 +253,12 @@
         300
       ],
       "alwaysOutputData": true,
-      "continueOnFail": true
+      "continueOnFail": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
     },
     {
       "parameters": {
@@ -302,7 +322,12 @@
         1800,
         200
       ],
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
     },
     {
       "parameters": {
@@ -332,7 +357,12 @@
         1800,
         400
       ],
-      "continueOnFail": true
+      "continueOnFail": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "mT5XZfEaeP1fqjl4"
+        }
+      }
     },
     {
       "parameters": {
