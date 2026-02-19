@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_CONNECTIONS_ONLY';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_CONNECTIONS_ONLY';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "success",
       "name": "Success",

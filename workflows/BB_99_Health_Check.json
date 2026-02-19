@@ -1,0 +1,278 @@
+{
+  "name": "BB_99_Health_Check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Every 5 Min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 as db_ok;",
+        "options": {}
+      },
+      "id": "check_db",
+      "name": "Check DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        200,
+        200
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check_gcal",
+      "name": "Check GCal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        200,
+        400
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "mT5XZfEaeP1fqjl4"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_99_Health_Check';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'health_check', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\nconst results = {\n  timestamp: DateTime.now().setZone(TIMEZONE).toISO(),\n  services: {},\n  healthy: true,\n  issues: []\n};\n\ntry {\n  // Check DB\n  const dbResult = $('Check DB').first()?.json;\n  results.services.database = {\n    status: dbResult?.db_ok === 1 ? 'healthy' : 'unhealthy',\n    response: dbResult?.db_ok === 1\n  };\n  if (dbResult?.db_ok !== 1) {\n    results.healthy = false;\n    results.issues.push('Database connection failed');\n  }\n} catch (e) {\n  results.services.database = { status: 'error', error: e.message };\n  results.healthy = false;\n  results.issues.push('Database error: ' + e.message);\n}\n\ntry {\n  // Check GCal\n  const gcalResult = $('Check GCal').first()?.json;\n  const gcalOk = gcalResult && !gcalResult.error && gcalResult.items !== undefined;\n  results.services.google_calendar = {\n    status: gcalOk ? 'healthy' : 'unhealthy',\n    calendars: gcalResult?.items?.length || 0\n  };\n  if (!gcalOk) {\n    results.issues.push('Google Calendar API error');\n  }\n} catch (e) {\n  results.services.google_calendar = { status: 'error', error: e.message };\n  results.issues.push('GCal error: ' + e.message);\n}\n\nreturn [{ json: results }];"
+      },
+      "id": "aggregate_results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-healthy",
+              "leftValue": "={{ $json.healthy }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "route_health",
+      "name": "Is Healthy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "error_handling",
+          "mode": "name"
+        },
+        "table": {
+          "__rl": true,
+          "value": "error_logs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_name": "BB_99_Health_Check",
+            "error_type": "HEALTH_CHECK_FAILED",
+            "error_message": "={{ $json.issues.join(', ') }}",
+            "severity": "WARNING",
+            "environment": "production",
+            "metadata": "={{ JSON.stringify($json.services) }}"
+          }
+        }
+      },
+      "id": "log_issue",
+      "name": "Log Issue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        800,
+        400
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "5391760292",
+        "text": "=⚠️ *Health Check Failed*\n\n*Time:* {{ $json.timestamp }}\n*Issues:* {{ $json.issues.join(', ') }}\n\n*Services:*\n• DB: {{ $json.services.database.status }}\n• GCal: {{ $json.services.google_calendar.status }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "alert_telegram",
+      "name": "Alert Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "U8P4P8JT8XwCoIzD"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nreturn [{ json: { status: 'healthy', timestamp: DateTime.now().setZone(TIMEZONE).toISO() } }];"
+      },
+      "id": "healthy",
+      "name": "Healthy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 Min": {
+      "main": [
+        [
+          {
+            "node": "Check DB",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check GCal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check DB": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check GCal": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Is Healthy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Healthy?": {
+      "main": [
+        [
+          {
+            "node": "Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Issue": {
+      "main": [
+        [
+          {
+            "node": "Alert Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}

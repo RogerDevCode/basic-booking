@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 """
 FASE 1: Edge Cases & Boundary Testing
 Tests para casos extremos y límites de inputs.
@@ -9,7 +10,7 @@ import requests
 import sys
 from datetime import datetime, timedelta
 
-BASE_URL = "http://localhost:5678"
+BASE_URL = os.getenv("N8N_API_URL", "http://localhost:5678")
 
 class EdgeCaseTester:
     def __init__(self):
@@ -281,32 +282,32 @@ def test_telegram_specific(tester):
     
     # Very long text
     tester.test("Long message text", "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": 123}, "text": "A" * 4096, "from": {"first_name": "Test"}}},
+        {"message": {"chat": {"id": 123}, "text": "A" * 4096, "from": {"id": 123, "first_name": "Test"}}},
         expect_success=True)
     
     # Empty text
     tester.test("Empty message text", "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": 123}, "text": "", "from": {"first_name": "Test"}}},
+        {"message": {"chat": {"id": 123}, "text": "", "from": {"id": 123, "first_name": "Test"}}},
         expect_success=True)
     
     # No text field
     tester.test("No text field", "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": 123}, "from": {"first_name": "Test"}}},
+        {"message": {"chat": {"id": 123}, "from": {"id": 123, "first_name": "Test"}}},
         expect_success=True)
     
     # Sticker instead of text
     tester.test("Sticker message", "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": 123}, "sticker": {"file_id": "xyz"}, "from": {"first_name": "Test"}}},
+        {"message": {"chat": {"id": 123}, "sticker": {"file_id": "xyz"}, "from": {"id": 123, "first_name": "Test"}}},
         expect_success=True)
     
     # Negative chat_id (groups)
     tester.test("Negative chat_id (group)", "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": -100123456789}, "text": "/start", "from": {"first_name": "Test"}}},
+        {"message": {"chat": {"id": -100123456789}, "text": "/start", "from": {"id": 123, "first_name": "Test"}}},
         expect_success=True)
     
     # Very large chat_id
     tester.test("Large chat_id", "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": 999999999999999}, "text": "/start", "from": {"first_name": "Test"}}},
+        {"message": {"chat": {"id": 999999999999999}, "text": "/start", "from": {"id": 123, "first_name": "Test"}}},
         expect_success=True)
 
 def main():

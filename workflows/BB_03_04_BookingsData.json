@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_04_BookingsData';\nconst meta = () => ({ source: 'guard', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  \n  if (!raw.provider_id) {\n    return fail('VAL_MISSING_ID', 'Missing provider_id in input');\n  }\n\n  return ok({\n    provider_id: raw.provider_id,\n    start_date: raw.start_date || new Date().toISOString().split('T')[0]\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_03_04_BookingsData';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'guard', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  \n  // Accept both provider_id (UUID) and provider_slug (string)\n  const providerId = raw.provider_id;\n  const providerSlug = raw.provider_slug;\n  \n  if (!providerId && !providerSlug) {\n    return fail('VAL_MISSING_ID', 'Missing provider_id or provider_slug in input');\n  }\n\n  // Validate slug format if provided (prevent path traversal)\n  if (providerSlug && !/^[a-z0-9-]+$/i.test(providerSlug)) {\n    return fail('VAL_INVALID_SLUG', 'provider_slug must contain only alphanumeric characters and hyphens');\n  }\n\n  return ok({\n    provider_id: providerId,\n    provider_slug: providerSlug,\n    start_date: raw.start_date || DateTime.now().setZone(TIMEZONE).toISO().split('T')[0]\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -76,7 +76,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT \n  id, \n  start_time, \n  end_time, \n  status\nFROM public.bookings \nWHERE provider_id = '{{ $json.data.provider_id }}' \nAND status NOT IN ('cancelled')\nAND deleted_at IS NULL\nORDER BY start_time ASC;"
+        "query": "=SELECT b.id, b.start_time, b.end_time, b.status\nFROM public.bookings b\nJOIN public.providers p ON b.provider_id = p.id\nWHERE (b.provider_id = '{{ $json.data.provider_id }}' OR p.slug = '{{ $json.data.provider_slug }}')\nAND b.status NOT IN ('cancelled')\nAND b.deleted_at IS NULL\nAND p.deleted_at IS NULL\nORDER BY b.start_time ASC;"
       },
       "id": "db_get_bookings",
       "name": "DB: Get Bookings",
@@ -96,7 +96,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_04_BookingsData';\nconst meta = () => ({ source: 'validate_db', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  const first = items[0].json;\n\n  // Check for DB error\n  if (first.error) {\n    return fail('DB_ERROR', `Database failed: ${first.error.message}`);\n  }\n\n  // For READ operations, empty result is NOT an error, it's an empty list\n  if (!first.id) {\n    return ok([]);\n  }\n\n  // Return all items as a list in 'data'\n  return ok(items.map(i => i.json));\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_03_04_BookingsData';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'validate_db', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  const first = items[0].json;\n\n  // Check for DB error\n  if (first.error) {\n    return fail('DB_ERROR', `Database failed: ${first.error.message}`);\n  }\n\n  // For READ operations, empty result is NOT an error, it's an empty list\n  if (!first.id) {\n    return ok([]);\n  }\n\n  // Return all items as a list in 'data'\n  return ok(items.map(i => i.json));\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
       "id": "validate_db",
       "name": "Validate DB Result",
@@ -109,7 +109,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_04_BookingsData';\nconst meta = () => ({ source: 'format_output', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n\ntry {\n  const raw = $input.first()?.json;\n  return [{ \n    json: {\n      success: raw.success !== false,\n      error_code: raw.error_code || null,\n      error_message: raw.error_message || null,\n      data: raw.data || (raw.success === false ? null : raw),\n      _meta: meta()\n    }\n  }];\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: e.message, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_03_04_BookingsData';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'format_output', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\ntry {\n  const raw = $input.first()?.json;\n  return [{ \n    json: {\n      success: raw.success !== false,\n      error_code: raw.error_code || null,\n      error_message: raw.error_message || null,\n      data: raw.data || (raw.success === false ? null : raw),\n      _meta: meta()\n    }\n  }];\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: e.message, data: null, _meta: meta() } }];\n}"
       },
       "id": "format_output",
       "name": "Format Output",

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 """
 FASE 3: End-to-End User Flows
 Tests simulating complete user journeys.
@@ -9,7 +10,7 @@ import requests
 import sys
 from datetime import datetime, date, timedelta
 
-BASE_URL = "http://localhost:5678"
+BASE_URL = os.getenv("N8N_API_URL", "http://localhost:5678")
 
 class E2ETester:
     def __init__(self):
@@ -94,7 +95,7 @@ def flow_1_provider_discovery(tester):
     # Step 1: User sends Telegram command to check availability
     tester.step(flow_name, "1. Telegram /availability command", 
         "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": 123456789}, "from": {"first_name": "TestUser"}, 
+        {"message": {"chat": {"id": 123456789}, "from": {"id": 123456789, "first_name": "TestUser"}, 
          "text": "/availability provider-123"}},
         expected_success=True)
     
@@ -166,14 +167,14 @@ def flow_3_telegram_error_flow(tester):
     # Step 1: Invalid command
     tester.step(flow_name, "1. Invalid command",
         "/webhook/telegram-webhook",
-        {"message": {"chat": {"id": 123456789}, "from": {"first_name": "TestUser"}, 
+        {"message": {"chat": {"id": 123456789}, "from": {"id": 123456789, "first_name": "TestUser"}, 
          "text": "/invalid_command_xyz"}},
         expected_success=True)  # Gateway passes through
     
     # Step 2: Missing chat.id
     tester.step(flow_name, "2. Missing chat.id",
         "/webhook/telegram-webhook",
-        {"message": {"from": {"first_name": "TestUser"}, "text": "/start"}},
+        {"message": {"from": {"id": 123456789, "first_name": "TestUser"}, "text": "/start"}},
         expected_success=False)
     
     # Step 3: Empty message

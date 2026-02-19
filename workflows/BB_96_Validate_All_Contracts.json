@@ -1,0 +1,186 @@
+{
+  "name": "BB_96_Validate_All_Contracts",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const WORKFLOWS_TO_VALIDATE = [\n  { workflow_id: 'SYi1KHfmeSUL6gJM', test_input: { body: { message: { chat: { id: 123 }, from: { id: 456 }, text: '/test' } } } },\n  { workflow_id: 'RFgFNM0HqcSaWkma', test_input: { telegram_id: '123' } },\n  { workflow_id: 'Fz0t9SdpNqBs2O9D', test_input: { provider_id: '00000000-0000-0000-0000-000000000001', user_id: '00000000-0000-0000-0000-000000000002', start_time: '2026-03-01T10:00:00Z', end_time: '2026-03-01T10:30:00Z' } },\n  { workflow_id: 'Af6KvYYdWnXeeOYs', test_input: { action: 'create' } },\n  { workflow_id: '25dSqiEaP1y0s0vA', test_input: {} },\n  { workflow_id: '2z2x94yvQ3x34bUG', test_input: { workflow_name: 'test', operation: 'check' } },\n  { workflow_id: 'Fpv9eqq97UyyQRUT', test_input: { success: true, error_code: null, error_message: null, data: {}, _meta: {} } }\n];\nreturn WORKFLOWS_TO_VALIDATE.map(w => ({ json: w }));"
+      },
+      "id": "list_workflows",
+      "name": "List Workflows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $json.workflow_id }}",
+          "mode": "id"
+        },
+        "inputData": "={{ $json.test_input }}"
+      },
+      "id": "run_workflow",
+      "name": "Run Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        400,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Fpv9eqq97UyyQRUT",
+          "mode": "id"
+        },
+        "inputData": "={{ $json }}"
+      },
+      "id": "validate_contract",
+      "name": "Validate Contract",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst workflowId = $('List Workflows').item.json.workflow_id;\nconst validation = $input.first()?.json || {};\nreturn [{\n  json: {\n    workflow: workflowId,\n    valid: validation.valid,\n    errors: validation.errors || [],\n    warnings: validation.warnings || [],\n    timestamp: DateTime.now().setZone('UTC').toISO()\n  }\n}];"
+      },
+      "id": "format_result",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst aggregated = {\n  workflow: items.map(i => i.json.workflow),\n  valid: items.map(i => i.json.valid),\n  errors: items.map(i => i.json.errors),\n  warnings: items.map(i => i.json.warnings)\n};\nreturn [{ json: aggregated }];"
+      },
+      "id": "aggregate",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst results = $input.first().json;\nconst workflows = results.workflow || [];\nconst valids = results.valid || [];\nconst allErrors = results.errors || [];\nconst allWarnings = results.warnings || [];\n\nconst total = workflows.length;\nconst passed = valids.filter(v => v === true).length;\nconst failed = total - passed;\n\nconst details = workflows.map((w, i) => ({\n  workflow: w,\n  valid: valids[i],\n  errors: allErrors[i],\n  warnings: allWarnings[i]\n}));\n\nconst report = {\n  summary: {\n    total,\n    passed,\n    failed,\n    pass_rate: total > 0 ? Math.round((passed / total) * 100) + '%' : '0%'\n  },\n  details,\n  run_at: DateTime.now().setZone('UTC').toISO(),\n  success: failed === 0\n};\n\nreturn [{ json: report }];"
+      },
+      "id": "final_report",
+      "name": "Final Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily": {
+      "main": [
+        [
+          {
+            "node": "List Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Workflows": {
+      "main": [
+        [
+          {
+            "node": "Run Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Contract": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Result": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Final Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}

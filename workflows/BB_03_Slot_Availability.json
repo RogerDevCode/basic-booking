@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidDateOnly = (dateStr) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr)) return false;\n  const dt = DateTime.fromISO(dateStr, { zone: 'utc' });\n  return dt.isValid;\n};\n\nconst isValidDateTime = (input) => {\n  if (!input || typeof input !== 'string') return false;\n  const dt = DateTime.fromISO(input, { zone: 'utc' });\n  return dt.isValid;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.provider_slug) errors.push('provider_slug is required');\n  \n  if (raw.target_date) {\n    if (!isValidDateOnly(raw.target_date) && !isValidDateTime(raw.target_date)) {\n      errors.push('target_date must be valid ISO date');\n    }\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  const targetDate = raw.target_date || new Date().toISOString().split('T')[0];\n\n  return ok({\n    provider_slug: raw.provider_slug,\n    target_date: targetDate,\n    days_range: raw.days_range || 7\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidDateOnly = (dateStr) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr)) return false;\n  const dt = DateTime.fromISO(dateStr, { zone: 'utc' });\n  return dt.isValid;\n};\n\nconst isValidDateTime = (input) => {\n  if (!input || typeof input !== 'string') return false;\n  const dt = DateTime.fromISO(input, { zone: 'utc' });\n  return dt.isValid;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.provider_slug) errors.push('provider_slug is required');\n  \n  if (raw.target_date) {\n    if (!isValidDateOnly(raw.target_date) && !isValidDateTime(raw.target_date)) {\n      errors.push('target_date must be valid ISO date');\n    }\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  const targetDate = raw.target_date || DateTime.now().setZone(TIMEZONE).toISO().split('T')[0];\n\n  return ok({\n    provider_slug: raw.provider_slug,\n    target_date: targetDate,\n    days_range: raw.days_range || 7\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -86,7 +86,7 @@
     },
     {
       "parameters": {
-        "workflowId": "H47K7umoexfwokXJ",
+        "workflowId": "BrTePMv0s1WX5se8",
         "options": {}
       },
       "id": "exec-provider",
@@ -140,7 +140,7 @@
     },
     {
       "parameters": {
-        "workflowId": "Mk0zVcooUrAoF1dT",
+        "workflowId": "pON7WaWm7CnnbAlB",
         "options": {}
       },
       "id": "exec-schedule",
@@ -194,7 +194,7 @@
     },
     {
       "parameters": {
-        "workflowId": "A0rZWiKvALsbupmh",
+        "workflowId": "ApjHt8XrySwxM3Rw",
         "options": {}
       },
       "id": "exec-slots",
@@ -248,7 +248,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "success",
       "name": "Success",
@@ -261,7 +261,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'ORCH_SUBWF_FAILED', error_message: 'Subworkflow execution failed', data: null, _meta: meta() } }];"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_03_Slot_Availability';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nreturn [{ json: { success: false, error_code: 'ORCH_SUBWF_FAILED', error_message: 'Subworkflow execution failed', data: null, _meta: meta() } }];"
       },
       "id": "error",
       "name": "Error",

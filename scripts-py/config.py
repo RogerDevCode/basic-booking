@@ -72,7 +72,7 @@ class N8NConfig:
         # API URL: parameter > env var > default
         self.api_url = api_url or os.getenv("N8N_API_URL") or "http://localhost:5678"
         self.api_url = self.api_url.rstrip("/")
-        
+
         # Strip /api/v1 if already present to avoid duplication in base_endpoint
         if self.api_url.endswith("/api/v1"):
             self.api_url = self.api_url[:-7]
@@ -118,4 +118,4 @@ WORKFLOW_IDS = {
 }
 
 # Workflows directory path
-WORKFLOWS_DIR = Path(__file__).parent.parent / "workflows"
+WORKFLOWS_DIR = (Path(__file__).parent.parent / "workflows").resolve()

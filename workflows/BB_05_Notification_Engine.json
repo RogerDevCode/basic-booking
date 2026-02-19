@@ -3,23 +3,6 @@
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "notify-batch",
-        "responseMode": "lastNode",
-        "options": {}
-      },
-      "id": "webhook",
-      "name": "\ud83e\uddea Test Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        0,
-        300
-      ],
-      "webhookId": "notify-batch-test"
-    },
-    {
-      "parameters": {
         "inputSource": "passthrough"
       },
       "id": "trigger",
@@ -28,69 +11,69 @@
       "typeVersion": 1.1,
       "position": [
         0,
-        500
+        300
       ]
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+        "operation": "executeQuery",
+        "query": "SELECT id, booking_id, user_id, message, channel, recipient, priority, payload, retry_count FROM notification_queue WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= NOW()) ORDER BY priority DESC, created_at ASC LIMIT 10;",
+        "options": {}
       },
-      "id": "guard",
-      "name": "Guard",
+      "id": "get_pending",
+      "name": "Get Pending",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        200,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'notification', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  \n  if (!items || items.length === 0 || (items.length === 1 && Object.keys(items[0].json).length === 0)) {\n    return fail('NOTIF_NO_PENDING', 'No pending notifications to process');\n  }\n\n  const notifications = items.map(item => {\n    const n = item.json;\n    return {\n      id: n.id,\n      booking_id: n.booking_id,\n      user_id: n.user_id,\n      message: n.message,\n      channel: n.channel || 'telegram',\n      recipient: n.recipient,\n      priority: n.priority || 5,\n      payload: n.payload || {},\n      retry_count: n.retry_count || 0\n    };\n  });\n\n  return ok({ notifications, count: notifications.length });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+      },
+      "id": "format_notifications",
+      "name": "Format Notifications",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        200,
-        400
+        400,
+        300
       ]
     },
     {
       "parameters": {
-        "mode": "rules",
-        "rules": {
-          "values": [
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "outputKey": "error",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "check-error",
-                    "leftValue": "={{ $json.success }}",
-                    "operator": {
-                      "type": "boolean",
-                      "operation": "false"
-                    }
-                  }
-                ],
-                "combinator": "and"
+              "id": "check-pending",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
               }
             }
-          ]
-        },
-        "options": {
-          "fallbackOutput": "extra"
+          ],
+          "combinator": "and"
         }
       },
-      "id": "switch-guard",
-      "name": "Guard OK?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        400,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
-      },
-      "id": "success",
-      "name": "Success",
-      "type": "n8n-nodes-base.code",
+      "id": "route_has_pending",
+      "name": "Has Pending?",
+      "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
         600,
@@ -99,97 +82,214 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'NOTIF_ERROR', error_message: 'Notification failed', data: null, _meta: meta() } }];"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'notification', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nreturn [{ json: { success: true, error_code: null, error_message: null, data: { processed: 0, message: 'No pending notifications' }, _meta: meta() } }];"
       },
-      "id": "error",
-      "name": "Error",
+      "id": "no_pending",
+      "name": "No Pending",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        600,
-        500
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "output",
-      "name": "Output",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
       "position": [
         800,
         400
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'notification', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const notifications = $input.first().json.data.notifications;\n  \n  // Format for Telegram\n  const formatted = notifications.map(n => ({\n    notification_id: n.id,\n    chat_id: n.recipient || '5391760292',\n    text: n.message,\n    parse_mode: 'Markdown',\n    original: n\n  }));\n  \n  return ok({ formatted, count: formatted.length });\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "format_telegram",
+      "name": "Format Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "={{ $json.parse_mode }}"
+        }
+      },
+      "id": "send_telegram",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        200
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "U8P4P8JT8XwCoIzD"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'notification', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\ntry {\n  // Get results from Telegram sends\n  const items = $input.all();\n  const results = items.map(item => {\n    const original = item.json.original || {};\n    const telegramResult = item.json;\n    \n    return {\n      notification_id: original.id || telegramResult.notification_id,\n      success: !!telegramResult.message_id,\n      message_id: telegramResult.message_id || null,\n      chat_id: telegramResult.chat?.id || original.recipient\n    };\n  });\n  \n  return results.map(r => ({ json: r }));\n} catch (e) {\n  return [{ json: { success: false, notification_id: null, error: e.message } }];\n}"
+      },
+      "id": "process_results",
+      "name": "Process Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE notification_queue SET status = 'sent', sent_at = NOW() WHERE id = $1::uuid;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.notification_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "mark_sent",
+      "name": "Mark Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1400,
+        200
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Notification_Engine';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'notification', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  const processed = items.length;\n  \n  return ok({ processed, timestamp: DateTime.now().setZone(TIMEZONE).toISO() });\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "summary",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        300
+      ]
     }
   ],
   "connections": {
-    "\ud83e\uddea Test Webhook": {
-      "main": [
-        [
-          {
-            "node": "Guard",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Start": {
       "main": [
         [
           {
-            "node": "Guard",
+            "node": "Get Pending",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard": {
+    "Get Pending": {
       "main": [
         [
           {
-            "node": "Guard OK?",
+            "node": "Format Notifications",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard OK?": {
+    "Format Notifications": {
       "main": [
         [
           {
-            "node": "Error",
+            "node": "Has Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Pending?": {
+      "main": [
+        [
+          {
+            "node": "Format Telegram",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Success",
+            "node": "No Pending",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Success": {
+    "No Pending": {
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Summary",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Error": {
+    "Format Telegram": {
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Send Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram": {
+      "main": [
+        [
+          {
+            "node": "Process Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Results": {
+      "main": [
+        [
+          {
+            "node": "Mark Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Sent": {
+      "main": [
+        [
+          {
+            "node": "Summary",
             "type": "main",
             "index": 0
           }

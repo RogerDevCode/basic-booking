@@ -1,0 +1,25 @@
+-- ============================================================================
+-- ORDEN DE EJECUCIÓN - SEED DATA SCRIPTS
+-- ============================================================================
+-- 
+-- Ejecutar en este orden desde la consola de Neon:
+--
+-- 1. fix_triggers.sql    (solo si hay errores de trigger)
+-- 2. 01_users.sql
+-- 3. 02_providers.sql
+-- 4. 03_services.sql
+-- 5. 04_schedules.sql
+-- 6. 05_bookings.sql
+-- 7. 06_firewall.sql
+-- 8. 07_notifications.sql
+-- 9. 08_circuit_breaker.sql
+-- 10. 09_system_errors.sql
+-- 11. 10_audit_logs.sql
+-- 12. 11_verify.sql
+--
+-- ============================================================================
+-- NOTAS:
+-- - Cada script es independiente e idempotente
+-- - Usa WHERE NOT EXISTS para evitar duplicados
+-- - Si hay errores, continuar con el siguiente script
+-- ============================================================================

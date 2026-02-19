@@ -3,23 +3,6 @@
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "bb02-security",
-        "responseMode": "lastNode",
-        "options": {}
-      },
-      "id": "webhook",
-      "name": "\ud83e\uddea Test Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        0,
-        300
-      ],
-      "webhookId": "bb02-security-test"
-    },
-    {
-      "parameters": {
         "inputSource": "passthrough"
       },
       "id": "trigger",
@@ -28,12 +11,12 @@
       "typeVersion": 1.1,
       "position": [
         0,
-        500
+        300
       ]
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  \n  if (!raw.telegram_id) return fail('VAL_MISSING_ID', 'telegram_id is required');\n  \n  // Validate telegram_id is numeric only (Telegram IDs are integers)\n  const telegramId = String(raw.telegram_id);\n  if (!/^\\d+$/.test(telegramId)) {\n    return fail('VAL_INVALID_ID', 'telegram_id must be a valid numeric ID');\n  }\n  \n  return ok({\n    telegram_id: telegramId,\n    action: raw.action || 'access',\n    access: 'granted'\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'security', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  \n  if (!raw.telegram_id) return fail('VAL_MISSING_ID', 'telegram_id is required');\n  \n  const telegramId = String(raw.telegram_id);\n  if (!/^\\d+$/.test(telegramId)) {\n    return fail('VAL_INVALID_ID', 'telegram_id must be a valid numeric ID');\n  }\n  \n  return ok({\n    telegram_id: telegramId,\n    action: raw.action || 'access',\n    ip: raw.ip || null\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -41,55 +24,45 @@
       "typeVersion": 2,
       "position": [
         200,
-        400
+        300
       ]
     },
     {
       "parameters": {
-        "mode": "rules",
-        "rules": {
-          "values": [
-            {
-              "outputKey": "error",
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "check-error",
-                    "leftValue": "={{ $json.success }}",
-                    "operator": {
-                      "type": "boolean",
-                      "operation": "false"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              }
-            }
-          ]
-        },
+        "operation": "executeQuery",
+        "query": "SELECT id, entity_id, strike_count, is_blocked, blocked_until, last_strike_at FROM security_firewall WHERE entity_id = $1;",
         "options": {
-          "fallbackOutput": "extra"
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.data.telegram_id }}"
+              }
+            ]
+          }
         }
       },
-      "id": "switch-guard",
-      "name": "Guard OK?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
+      "id": "check_firewall",
+      "name": "Check Firewall",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
       "position": [
         400,
-        400
-      ]
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'security', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  const telegramId = $('Guard').item.json.data.telegram_id;\n  \n  // If no record exists, user is allowed\n  if (!items?.length || (items.length === 1 && Object.keys(items[0].json).length === 0)) {\n    return ok({ telegram_id: telegramId, access: 'granted', reason: 'new_user' });\n  }\n\n  const record = items[0].json;\n  const now = DateTime.now().setZone(TIMEZONE);\n  \n  // Check if blocked\n  if (record.is_blocked) {\n    const blockedUntil = record.blocked_until ? DateTime.fromISO(record.blocked_until) : null;\n    \n    // If still blocked\n    if (!blockedUntil || blockedUntil > now) {\n      return fail('SEC_BLOCKED', `User is blocked until ${blockedUntil?.toISO() || 'indefinite'}`);\n    }\n  }\n  \n  // Check strike count (rate limiting)\n  const lastStrike = record.last_strike_at ? DateTime.fromISO(record.last_strike_at) : null;\n  const hourAgo = now.minus({ hours: 1 });\n  \n  // If more than 10 strikes in the last hour, temporary block\n  if (record.strike_count >= 10 && lastStrike && lastStrike > hourAgo) {\n    return fail('SEC_RATE_LIMITED', 'Too many requests. Please wait and try again.');\n  }\n\n  return ok({ \n    telegram_id: telegramId, \n    access: 'granted', \n    strike_count: record.strike_count,\n    reason: 'verified'\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
-      "id": "success",
-      "name": "Success",
+      "id": "evaluate_access",
+      "name": "Evaluate Access",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -98,42 +71,106 @@
       ]
     },
     {
-      "parameters": {},
-      "id": "output",
-      "name": "Output",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-access",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "route_access",
+      "name": "Access Granted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
       "position": [
         800,
-        350
+        300
       ]
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+        "operation": "executeQuery",
+        "query": "INSERT INTO security_firewall (id, entity_id, strike_count, last_strike_at, created_at) VALUES (gen_random_uuid(), $1, 1, NOW(), NOW()) ON CONFLICT (entity_id) DO UPDATE SET strike_count = security_firewall.strike_count + 1, last_strike_at = NOW() WHERE security_firewall.entity_id = $1 RETURNING strike_count;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $('Guard').item.json.data.telegram_id }}"
+              }
+            ]
+          }
+        }
       },
-      "id": "error-guard",
+      "id": "log_access",
+      "name": "Log Access",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1000,
+        200
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'security', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const telegramId = $('Guard').item.json.data.telegram_id;\n  const result = $input.first()?.json;\n  \n  return ok({\n    telegram_id: telegramId,\n    access: 'granted',\n    strike_count: result?.strike_count || 1,\n    timestamp: DateTime.now().setZone(TIMEZONE).toISO()\n  });\n} catch (e) {\n  return [{ json: { success: true, error_code: null, error_message: null, data: { access: 'granted', warning: e.message }, _meta: meta() } }];\n}"
+      },
+      "id": "success",
+      "name": "Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'security', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nreturn $input.all();"
+      },
+      "id": "error",
       "name": "Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        600,
-        500
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_02_Security_Firewall';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'security', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\ntry {\n  const input = $input.all();\n  if (!input?.length) {\n    return [{ json: { success: true, error_code: null, error_message: null, data: { access: 'granted' }, _meta: meta() } }];\n  }\n  return input;\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "format_output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        300
       ]
     }
   ],
   "connections": {
-    "\ud83e\uddea Test Webhook": {
-      "main": [
-        [
-          {
-            "node": "Guard",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Start": {
       "main": [
         [
@@ -149,22 +186,55 @@
       "main": [
         [
           {
-            "node": "Guard OK?",
+            "node": "Check Firewall",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard OK?": {
+    "Check Firewall": {
       "main": [
+        [
+          {
+            "node": "Evaluate Access",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Access": {
+      "main": [
+        [
+          {
+            "node": "Access Granted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Access Granted?": {
+      "main": [
+        [
+          {
+            "node": "Log Access",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Error",
             "type": "main",
             "index": 0
           }
-        ],
+        ]
+      ]
+    },
+    "Log Access": {
+      "main": [
         [
           {
             "node": "Success",
@@ -178,7 +248,7 @@
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }
@@ -189,7 +259,7 @@
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }

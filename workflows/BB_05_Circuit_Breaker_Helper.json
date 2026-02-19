@@ -1,0 +1,327 @@
+{
+  "name": "BB_05_Circuit_Breaker_Helper",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Circuit_Breaker_Helper';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'circuit_breaker', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst THRESHOLD = 5;\nconst COOLDOWN_SECONDS = 60;\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const workflowName = raw.workflow_name;\n  const operation = raw.operation || 'check';\n\n  if (!workflowName) return fail('VAL_MISSING_WORKFLOW', 'workflow_name is required');\n\n  return ok({\n    workflow_name: workflowName,\n    operation: operation,\n    threshold: THRESHOLD,\n    cooldown_seconds: COOLDOWN_SECONDS,\n    timestamp: DateTime.now().setZone(TIMEZONE).toISO()\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+      },
+      "id": "guard",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "check",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "op-check",
+                    "leftValue": "={{ $json.data.operation }}",
+                    "rightValue": "check",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "failure",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "op-failure",
+                    "leftValue": "={{ $json.data.operation }}",
+                    "rightValue": "failure",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "success",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "op-success",
+                    "leftValue": "={{ $json.data.operation }}",
+                    "rightValue": "success",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route_operation",
+      "name": "Route Operation",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, workflow_name, state, failure_count, last_failure_at, opened_at, next_attempt_at FROM circuit_breaker_state WHERE workflow_name = $1;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.data.workflow_name }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "check_state",
+      "name": "Check State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        100
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Circuit_Breaker_Helper';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'circuit_breaker', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst THRESHOLD = 5;\nconst COOLDOWN = 60;\n\ntry {\n  const items = $input.all();\n  const workflowName = $('Guard').item.json.data.workflow_name;\n  const now = DateTime.now().setZone(TIMEZONE);\n  \n  // No record = CLOSED (allow)\n  if (!items?.length || (items.length === 1 && Object.keys(items[0].json).length === 0)) {\n    return ok({ workflow_name: workflowName, state: 'CLOSED', allow: true, reason: 'no_record' });\n  }\n\n  const record = items[0].json;\n  \n  // If OPEN, check if cooldown passed\n  if (record.state === 'OPEN') {\n    const nextAttempt = record.next_attempt_at ? DateTime.fromISO(record.next_attempt_at) : null;\n    \n    if (nextAttempt && now >= nextAttempt) {\n      return ok({ workflow_name: workflowName, state: 'HALF_OPEN', allow: true, reason: 'cooldown_passed', record_id: record.id });\n    }\n    \n    return fail('SYS_CIRCUIT_OPEN', `Circuit is OPEN for ${workflowName}. Next attempt at ${nextAttempt?.toISO() || 'unknown'}`);\n  }\n  \n  // If HALF_OPEN, allow one test request\n  if (record.state === 'HALF_OPEN') {\n    return ok({ workflow_name: workflowName, state: 'HALF_OPEN', allow: true, reason: 'test_request', record_id: record.id });\n  }\n  \n  // CLOSED - check failure count\n  if (record.failure_count >= THRESHOLD) {\n    return fail('SYS_CIRCUIT_OPEN', `Circuit OPEN due to ${record.failure_count} failures`);\n  }\n\n  return ok({ workflow_name: workflowName, state: 'CLOSED', allow: true, failure_count: record.failure_count, record_id: record.id });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+      },
+      "id": "evaluate_check",
+      "name": "Evaluate Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO circuit_breaker_state (id, workflow_name, state, failure_count, last_failure_at, opened_at, next_attempt_at, created_at, updated_at) VALUES (gen_random_uuid(), $1, 'OPEN', 1, NOW(), NOW(), NOW() + INTERVAL '60 seconds', NOW(), NOW()) ON CONFLICT (workflow_name) DO UPDATE SET state = 'OPEN', failure_count = circuit_breaker_state.failure_count + 1, last_failure_at = NOW(), opened_at = NOW(), next_attempt_at = NOW() + INTERVAL '60 seconds', updated_at = NOW() WHERE circuit_breaker_state.workflow_name = $1 RETURNING *;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $('Guard').item.json.data.workflow_name }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "record_failure",
+      "name": "Record Failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        300
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO circuit_breaker_state (id, workflow_name, state, failure_count, created_at, updated_at) VALUES (gen_random_uuid(), $1, 'CLOSED', 0, NOW(), NOW()) ON CONFLICT (workflow_name) DO UPDATE SET state = 'CLOSED', failure_count = 0, updated_at = NOW() WHERE circuit_breaker_state.workflow_name = $1 RETURNING *;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $('Guard').item.json.data.workflow_name }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "record_success",
+      "name": "Record Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        500
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_05_Circuit_Breaker_Helper';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'circuit_breaker', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const result = $input.first()?.json;\n  const operation = $('Guard').item.json.data.operation;\n  \n  return ok({\n    operation: operation,\n    workflow_name: result?.workflow_name || $('Guard').item.json.data.workflow_name,\n    state: result?.state || 'updated',\n    failure_count: result?.failure_count ?? 0,\n    timestamp: DateTime.now().setZone(TIMEZONE).toISO()\n  });\n} catch (e) {\n  return [{ json: { success: true, error_code: null, error_message: null, data: { operation: 'completed', warning: e.message }, _meta: meta() } }];\n}"
+      },
+      "id": "format_result",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Route Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Operation": {
+      "main": [
+        [
+          {
+            "node": "Check State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check State": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Check": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Failure": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Success": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "BB_00_Global_Error_Handler"
+  }
+}

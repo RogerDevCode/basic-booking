@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 2OKAu9V3JyKMYd4hTekzDNj4lfdNIQjtnKY7PpJmd3jo880BJfFS2kUnx3O8bpt
+\restrict 4L2uxobDP2tc8skXkDbO2x5ohsFYKM4SNH9aHPrln5OpK0ZMcWS7Lnyt5RfEF1G
 
 -- Dumped from database version 17.7 (bdd1736)
 -- Dumped by pg_dump version 17.7 (Ubuntu 17.7-0ubuntu0.25.10.1)
@@ -371,77 +371,54 @@ ALTER FUNCTION error_handling.update_updated_at() OWNER TO neondb_owner;
 -- Name: acquire_booking_lock(uuid, timestamp with time zone, integer); Type: FUNCTION; Schema: public; Owner: neondb_owner
 --
 
-CREATE FUNCTION public.acquire_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone, p_timeout_seconds integer DEFAULT 30) RETURNS boolean
+CREATE FUNCTION public.acquire_booking_lock(p_provider_id uuid, p_start_time timestamp with time zone, p_timeout_seconds integer DEFAULT 30) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
 DECLARE
     lock_key bigint;
     lock_acquired boolean;
     expiry_time timestamp with time zone;
+    hash_text text;
 BEGIN
-    -- Create lock key hash from professional_id and start_time
-    -- This ensures unique locks per slot
-    lock_key := (
-        ('x' || encode(
-            digest(p_professional_id::text || p_start_time::text, 'sha256'),
-            'hex'
-        ))::bigint % 2147483647
-    );
+    hash_text := p_provider_id::text || p_start_time::text;
+    lock_key := ('x' || substring(encode(sha256(hash_text::bytea), 'hex'), 1, 15))::bit(64)::bigint;
     
-    -- Try to acquire advisory lock with timeout
-    expiry_time := NOW() + (p_timeout_seconds || 30) * INTERVAL '1 second';
+    expiry_time := NOW() + (p_timeout_seconds || ' seconds')::interval;
     
     WHILE NOW() < expiry_time LOOP
-        -- pg_try_advisory_xact_lock returns true if lock acquired
         SELECT pg_try_advisory_xact_lock(lock_key) INTO lock_acquired;
         
         IF lock_acquired THEN
             RETURN true;
         END IF;
         
-        -- Wait 10ms before retry
         PERFORM pg_sleep(0.01);
     END LOOP;
     
-    -- Lock not acquired
     RETURN false;
 END;
 $$;
 
 
-ALTER FUNCTION public.acquire_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone, p_timeout_seconds integer) OWNER TO neondb_owner;
-
---
--- Name: FUNCTION acquire_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone, p_timeout_seconds integer); Type: COMMENT; Schema: public; Owner: neondb_owner
---
-
-COMMENT ON FUNCTION public.acquire_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone, p_timeout_seconds integer) IS 'Acquires an advisory lock for a booking slot to prevent concurrent double-bookings. Returns true if lock acquired, false if timeout.';
-
+ALTER FUNCTION public.acquire_booking_lock(p_provider_id uuid, p_start_time timestamp with time zone, p_timeout_seconds integer) OWNER TO neondb_owner;
 
 --
 -- Name: check_booking_lock(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: neondb_owner
 --
 
-CREATE FUNCTION public.check_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone) RETURNS boolean
+CREATE FUNCTION public.check_booking_lock(p_provider_id uuid, p_start_time timestamp with time zone) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
 DECLARE
     lock_key bigint;
     lock_held boolean;
+    hash_text text;
 BEGIN
-    lock_key := (
-        ('x' || encode(
-            digest(p_professional_id::text || p_start_time::text, 'sha256'),
-            'hex'
-        ))::bigint % 2147483647
-    );
+    hash_text := p_provider_id::text || p_start_time::text;
+    lock_key := ('x' || substring(encode(sha256(hash_text::bytea), 'hex'), 1, 15))::bit(64)::bigint;
     
-    -- pg_advisory_lock checks if lock is held
-    -- This returns true if the current session holds the lock
-    -- To check globally, we would need pg_locks system view
     SELECT pg_try_advisory_xact_lock(lock_key) INTO lock_held;
     
-    -- If we can acquire it, it wasn't held; release immediately
     IF lock_held THEN
         PERFORM pg_advisory_unlock_xact(lock_key);
         RETURN false;
@@ -452,14 +429,7 @@ END;
 $$;
 
 
-ALTER FUNCTION public.check_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone) OWNER TO neondb_owner;
-
---
--- Name: FUNCTION check_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone); Type: COMMENT; Schema: public; Owner: neondb_owner
---
-
-COMMENT ON FUNCTION public.check_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone) IS 'Checks if an advisory lock is held. For debugging purposes.';
-
+ALTER FUNCTION public.check_booking_lock(p_provider_id uuid, p_start_time timestamp with time zone) OWNER TO neondb_owner;
 
 --
 -- Name: check_booking_overlap(); Type: FUNCTION; Schema: public; Owner: neondb_owner
@@ -471,7 +441,7 @@ CREATE FUNCTION public.check_booking_overlap() RETURNS trigger
 BEGIN
     IF EXISTS (
         SELECT 1 FROM bookings
-        WHERE professional_id = NEW.professional_id
+        WHERE provider_id = NEW.provider_id
           AND status != 'cancelled'
           AND tstzrange(start_time, end_time) && tstzrange(NEW.start_time, NEW.end_time)
           AND (NEW.id IS NULL OR id != NEW.id)
@@ -494,19 +464,21 @@ CREATE FUNCTION public.check_booking_overlap_with_lock() RETURNS trigger
     AS $$
 DECLARE
     lock_acquired boolean;
+    lock_key bigint;
+    hash_text text;
 BEGIN
-    -- FIX-05: Acquire lock before checking overlap
-    -- This prevents race conditions in concurrent bookings
-    SELECT acquire_booking_lock(NEW.professional_id, NEW.start_time, 5) INTO lock_acquired;
+    hash_text := NEW.provider_id::text || NEW.start_time::text;
+    lock_key := ('x' || substring(encode(sha256(hash_text::bytea), 'hex'), 1, 15))::bit(64)::bigint;
+    
+    SELECT pg_try_advisory_xact_lock(lock_key) INTO lock_acquired;
     
     IF NOT lock_acquired THEN
         RAISE EXCEPTION 'SLOT_LOCKED: Another transaction is processing this slot. Please retry.';
     END IF;
     
-    -- Original overlap check
     IF EXISTS (
         SELECT 1 FROM bookings
-        WHERE professional_id = NEW.professional_id
+        WHERE provider_id = NEW.provider_id
           AND status != 'cancelled'
           AND tstzrange(start_time, end_time) && tstzrange(NEW.start_time, NEW.end_time)
           AND (NEW.id IS NULL OR id != NEW.id)
@@ -520,13 +492,6 @@ $$;
 
 
 ALTER FUNCTION public.check_booking_overlap_with_lock() OWNER TO neondb_owner;
-
---
--- Name: FUNCTION check_booking_overlap_with_lock(); Type: COMMENT; Schema: public; Owner: neondb_owner
---
-
-COMMENT ON FUNCTION public.check_booking_overlap_with_lock() IS 'Enhanced overlap check with advisory lock acquisition. Prevents race conditions in concurrent bookings.';
-
 
 --
 -- Name: cleanup_old_notifications(integer); Type: FUNCTION; Schema: public; Owner: neondb_owner
@@ -895,7 +860,7 @@ COMMENT ON FUNCTION public.queue_notification(p_booking_id uuid, p_user_id uuid,
 -- Name: release_booking_lock(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: neondb_owner
 --
 
-CREATE FUNCTION public.release_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone) RETURNS void
+CREATE FUNCTION public.release_booking_lock(p_provider_id uuid, p_start_time timestamp with time zone) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
 DECLARE
@@ -903,26 +868,17 @@ DECLARE
 BEGIN
     lock_key := (
         ('x' || encode(
-            digest(p_professional_id::text || p_start_time::text, 'sha256'),
+            digest(p_provider_id::text || p_start_time::text, 'sha256'),
             'hex'
         ))::bigint % 2147483647
     );
     
-    -- Advisory locks are released automatically on transaction commit/rollback
-    -- This function exists for debugging purposes
-    RAISE NOTICE 'Lock for professional % at % would be released on transaction end', p_professional_id, p_start_time;
+    PERFORM pg_advisory_unlock_xact(lock_key);
 END;
 $$;
 
 
-ALTER FUNCTION public.release_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone) OWNER TO neondb_owner;
-
---
--- Name: FUNCTION release_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone); Type: COMMENT; Schema: public; Owner: neondb_owner
---
-
-COMMENT ON FUNCTION public.release_booking_lock(p_professional_id uuid, p_start_time timestamp with time zone) IS 'Releases advisory lock (automatic on transaction commit). Exists for debugging only.';
-
+ALTER FUNCTION public.release_booking_lock(p_provider_id uuid, p_start_time timestamp with time zone) OWNER TO neondb_owner;
 
 --
 -- Name: update_modtime(); Type: FUNCTION; Schema: public; Owner: neondb_owner
@@ -1622,6 +1578,23 @@ COMMENT ON TABLE public.notification_queue IS 'Queue for asynchronous notificati
 
 
 --
+-- Name: provider_cache; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.provider_cache (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    provider_id uuid NOT NULL,
+    provider_slug text NOT NULL,
+    data jsonb NOT NULL,
+    cached_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.provider_cache OWNER TO neondb_owner;
+
+--
 -- Name: providers; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
@@ -1822,6 +1795,10 @@ COPY error_handling.error_aggregations (id, workflow_name, error_type, error_fin
 --
 
 COPY error_handling.error_logs (id, workflow_name, error_type, error_message, error_fingerprint, severity, occurrences, metadata, input_data, stack_trace, user_id, session_id, environment, resolved, resolved_at, resolved_by, created_at, updated_at) FROM stdin;
+1	Manual_Test_Workflow	RUNTIME_ERROR	Unknown error	\N	CRITICAL	1	{"severity": "CRITICAL", "timestamp": "2026-02-16T23:12:01.063Z", "environment": "production", "workflow_id": "manual_test", "execution_id": "manual_test", "error_message": "Unknown error", "workflow_name": "Manual_Test_Workflow"}	\N	\N	\N	\N	production	f	\N	\N	2026-02-16 23:12:03.202723+00	2026-02-16 23:12:03.202723+00
+2	Manual_Test_Workflow	RUNTIME_ERROR	Unknown error	\N	CRITICAL	1	{"severity": "CRITICAL", "timestamp": "2026-02-16T23:16:33.451Z", "environment": "production", "workflow_id": "manual_test", "execution_id": "manual_test", "error_message": "Unknown error", "workflow_name": "Manual_Test_Workflow"}	\N	\N	\N	\N	production	f	\N	\N	2026-02-16 23:16:34.833098+00	2026-02-16 23:16:34.833098+00
+3	Manual_Test_Workflow	RUNTIME_ERROR	Unknown error	\N	CRITICAL	1	{"severity": "CRITICAL", "timestamp": "2026-02-16T23:26:55.822Z", "environment": "production", "workflow_id": "manual_test", "execution_id": "manual_test", "error_message": "Unknown error", "workflow_name": "Manual_Test_Workflow"}	\N	\N	\N	\N	production	f	\N	\N	2026-02-16 23:26:58.897041+00	2026-02-16 23:26:58.897041+00
+4	Manual_Test_Workflow	RUNTIME_ERROR	Unknown error	\N	CRITICAL	1	{"severity": "CRITICAL", "timestamp": "2026-02-18T17:32:02.215Z", "environment": "production", "workflow_id": "manual_test", "execution_id": "manual_test", "error_message": "Unknown error", "workflow_name": "Manual_Test_Workflow"}	\N	\N	\N	\N	production	f	\N	\N	2026-02-18 17:32:04.897311+00	2026-02-18 17:32:04.897311+00
 \.
 
 
@@ -2263,6 +2240,14 @@ b24b7b23-b257-419e-bdbc-19dd4185d049	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fc
 2311ffd3-7806-4028-985c-342c55aba3b1	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:13:47.075715+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
 ce60c07c-511a-4af2-8b12-1bba41574ac7	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:14:27.019572+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
 00027b1f-7d28-43ef-80b6-7e0379135440	providers	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	ACCESS_CHECK	\N	\N	system	\N	2026-02-11 15:15:42.309606+00	availability_check	{"workflow": "BB_03", "days_range": 3, "target_date": "2026-03-01"}
+298f9e92-6bba-4164-8a72-f413a101779f	users	a1b2c3d4-e5f6-7890-abcd-000000000001	INSERT	\N	{"telegram_id": 3000001}	system	\N	2026-01-19 23:58:01.030811+00	USER_CREATED	{"source": "seed"}
+4a3def7c-1011-48d4-9304-c8a16783a5ae	providers	b1b2b3b4-c5d6-7890-abcd-000000000001	INSERT	\N	{"name": "Dr. Alejandro Vera"}	system	\N	2025-12-20 23:58:01.030811+00	PROVIDER_CREATED	{"source": "seed"}
+1fef9bde-ce48-4144-890f-5c53e254244a	security_firewall	6e0f74e8-997a-4f14-83a5-d91508ba414a	UPDATE	{"strike_count": 4}	{"strike_count": 5}	system	\N	2026-02-18 23:28:01.030811+00	STRIKE_ADDED	{"entity_id": "telegram:3000016"}
+20625ba3-18e1-4915-8958-5ee2af41bb11	users	a1b2c3d4-e5f6-7890-abcd-000000000017	SOFT_DELETE	{"deleted_at": null}	{"deleted_at": "now"}	admin	192.168.1.100	2026-02-13 23:58:01.030811+00	USER_SOFT_DELETED	{"reason": "test"}
+1edcee89-7579-4a05-bfcc-9f3c7954e331	users	a1b2c3d4-e5f6-7890-abcd-000000000001	INSERT	\N	{"telegram_id": 3000001}	system	\N	2026-01-19 23:59:54.652148+00	USER_CREATED	{"source": "seed"}
+24beeca3-a51f-43f3-8a17-afd0681e0722	providers	b1b2b3b4-c5d6-7890-abcd-000000000001	INSERT	\N	{"name": "Dr. Alejandro Vera"}	system	\N	2025-12-20 23:59:54.831695+00	PROVIDER_CREATED	{"source": "seed"}
+05da5ccb-9206-4388-8797-1934434d64ab	security_firewall	48817624-21ef-4e50-a4e9-646d99b0b771	UPDATE	{"strike_count": 4}	{"strike_count": 5}	system	\N	2026-02-18 23:29:55.08666+00	STRIKE_ADDED	{"entity_id": "telegram:3000016"}
+69f22ba9-af87-4d11-a519-bc9a9f947a09	users	a1b2c3d4-e5f6-7890-abcd-000000000017	SOFT_DELETE	{"deleted_at": null}	{"deleted_at": "now"}	admin	192.168.1.100	2026-02-13 23:59:55.251246+00	USER_SOFT_DELETED	{"reason": "test"}
 \.
 
 
@@ -2349,6 +2334,13 @@ c32f3bbe-4344-4160-92af-1b17295e21fa	4f4d34d2-c89d-4154-a0a3-95540f523ba3	2eebc9
 81b04e1a-ebc9-4bf9-b829-6012d566e730	b1e95f01-49b4-423c-b530-b4dc265e9082	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	a7a019cb-3442-4f57-8877-1b04a1749c01	2026-01-25 08:00:00+00	2026-01-25 08:45:00+00	confirmed	\N	COMPLEX_NAME_TEST	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 519869d0-7f28-49ae-a2a7-b1fbf3fcb6bc	b1e95f01-49b4-423c-b530-b4dc265e9082	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	a7a019cb-3442-4f57-8877-1b04a1749c01	2026-01-21 08:00:00+00	2026-01-21 08:45:00+00	confirmed	\N	COMPLEX_NAME_TEST	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 e6a86dd7-5146-4347-ba07-723aea2fd513	b9f03843-eee6-4607-ac5a-496c6faa9ea1	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	a7a019cb-3442-4f57-8877-1b04a1749c01	2026-04-01 10:00:00+00	2026-04-01 10:30:00+00	confirmed	\N	\N	2026-01-21 20:45:38.3443+00	2026-01-21 20:45:38.3443+00	\N	\N	\N
+940c5dbc-fb55-41f8-a02c-2180c89b1c6e	a1b2c3d4-e5f6-7890-abcd-000000000001	b1b2b3b4-c5d6-7890-abcd-000000000001	c255adb2-1657-434e-804f-0a68d185c6eb	2026-02-21 09:56:32.493754+00	2026-02-21 10:26:32.493754+00	confirmed	\N	Reserva de prueba - futura confirmada	2026-02-18 23:56:32.493754+00	2026-02-18 23:56:32.493754+00	\N	\N	\N
+7894478c-c7f3-4f61-8e01-dbef8173f5fb	a1b2c3d4-e5f6-7890-abcd-000000000002	b1b2b3b4-c5d6-7890-abcd-000000000001	96ee9119-f407-41cc-b816-244d8c1f1ab4	2026-02-22 13:56:32.493754+00	2026-02-22 14:41:32.493754+00	confirmed	\N	Consulta especializada - futura	2026-02-18 23:56:32.493754+00	2026-02-18 23:56:32.493754+00	\N	\N	\N
+b8dff0f5-72e4-463d-9e29-191484d56ccd	a1b2c3d4-e5f6-7890-abcd-000000000003	b1b2b3b4-c5d6-7890-abcd-000000000002	fb5b259a-33ee-413a-aac2-e48bc0cba754	2026-02-24 10:56:32.493754+00	2026-02-24 11:41:32.493754+00	pending	\N	Reserva pendiente de confirmación	2026-02-18 23:56:32.493754+00	2026-02-18 23:56:32.493754+00	\N	\N	\N
+ff56e5fe-b3ac-44ed-8054-dc8b8733236e	a1b2c3d4-e5f6-7890-abcd-000000000004	b1b2b3b4-c5d6-7890-abcd-000000000001	c255adb2-1657-434e-804f-0a68d185c6eb	2026-02-20 08:56:32.493754+00	2026-02-20 09:26:32.493754+00	cancelled	\N	CANCELADA - Usuario solicitó cancelación	2026-02-16 23:56:32.493754+00	2026-02-18 23:56:32.493754+00	\N	\N	\N
+006dab46-0e13-48e7-b5ca-db98fc82040d	a1b2c3d4-e5f6-7890-abcd-000000000005	b1b2b3b4-c5d6-7890-abcd-000000000001	5eb7ac08-ce05-45ea-8753-ef367eb8742f	2026-02-12 14:56:32.493754+00	2026-02-12 15:16:20.493754+00	completed	\N	Atención completada exitosamente	2026-02-08 23:56:32.493754+00	2026-02-11 23:56:32.493754+00	\N	\N	\N
+84ad2cac-894b-47cd-86e7-6a6998356324	a1b2c3d4-e5f6-7890-abcd-000000000006	b1b2b3b4-c5d6-7890-abcd-000000000002	fb5b259a-33ee-413a-aac2-e48bc0cba754	2026-02-16 09:56:32.493754+00	2026-02-16 10:41:32.493754+00	no_show	\N	NO_SHOW - Cliente no asistió	2026-02-13 23:56:32.493754+00	2026-02-15 23:56:32.493754+00	\N	\N	\N
+9d81c829-d2af-4b3d-a2d2-9e015ce27d67	a1b2c3d4-e5f6-7890-abcd-000000000001	b1b2b3b4-c5d6-7890-abcd-000000000003	91973286-7da0-4b98-b8f8-c56ab225e4e8	2026-03-01 15:56:32.493754+00	2026-03-01 16:56:32.493754+00	rescheduled	\N	REPROGRAMADA	2026-02-17 23:56:32.493754+00	2026-02-18 23:56:32.493754+00	\N	\N	\N
 \.
 
 
@@ -2357,6 +2349,12 @@ e6a86dd7-5146-4347-ba07-723aea2fd513	b9f03843-eee6-4607-ac5a-496c6faa9ea1	2eebc9
 --
 
 COPY public.circuit_breaker_state (id, workflow_name, state, failure_count, last_failure_at, opened_at, next_attempt_at, created_at, updated_at) FROM stdin;
+19c413b5-2a71-44fe-a313-3ed7f2f933f3	BB_01_Telegram_Bot	CLOSED	0	\N	\N	\N	2026-02-18 23:57:25.067695+00	2026-02-18 23:57:25.067695+00
+55ba682b-8b03-42dc-8d07-2462dbc40a5a	BB_02_Booking_Flow	CLOSED	2	2026-02-18 22:57:25.067695+00	\N	\N	2026-02-18 23:57:25.067695+00	2026-02-18 23:57:25.067695+00
+af4eb4c2-f932-4c8b-bf2a-5af7318114bb	BB_03_Availability_Engine	CLOSED	0	\N	\N	\N	2026-02-18 23:57:25.067695+00	2026-02-18 23:57:25.067695+00
+6107166e-df11-4c4d-9c85-b31457c3e677	BB_04_GCal_Sync	HALF_OPEN	4	2026-02-18 23:52:25.067695+00	2026-02-18 23:47:25.067695+00	2026-02-19 00:02:25.067695+00	2026-02-18 23:57:25.067695+00	2026-02-18 23:57:25.067695+00
+6fe913d3-33fa-4367-a682-d4106abbc1be	BB_05_Reminder_Worker	OPEN	6	2026-02-18 23:55:25.067695+00	2026-02-18 23:55:25.067695+00	2026-02-19 00:55:25.067695+00	2026-02-18 23:57:25.067695+00	2026-02-18 23:57:25.067695+00
+ad090840-e6da-4a91-800e-64351e58790a	BB_06_Notification_Retry	CLOSED	1	2026-02-18 23:27:25.067695+00	\N	\N	2026-02-18 23:57:25.067695+00	2026-02-18 23:57:25.067695+00
 \.
 
 
@@ -2365,6 +2363,9 @@ COPY public.circuit_breaker_state (id, workflow_name, state, failure_count, last
 --
 
 COPY public.error_metrics (id, metric_date, workflow_name, severity, error_count, first_occurrence, last_occurrence, created_at, updated_at) FROM stdin;
+aefb25a2-caac-490a-ab82-bcb26dbc60d7	2026-02-17	BB_03_Availability_Engine	LOW	5	2026-02-17 22:57:42.291225+00	2026-02-17 23:57:42.291225+00	2026-02-17 23:57:42.291225+00	2026-02-18 23:57:42.291225+00
+c3fdcc3c-f300-4c8d-b502-223052be25e8	2026-02-17	BB_04_GCal_Sync	MEDIUM	3	2026-02-17 21:57:42.291225+00	2026-02-17 23:57:42.291225+00	2026-02-17 23:57:42.291225+00	2026-02-18 23:57:42.291225+00
+eb469e20-6db2-42c2-9769-1dec38689c67	2026-02-18	BB_03_Availability_Engine	LOW	2	2026-02-18 21:57:42.291225+00	2026-02-18 22:57:42.291225+00	2026-02-18 23:57:42.291225+00	2026-02-18 23:57:42.291225+00
 \.
 
 
@@ -2382,6 +2383,34 @@ COPY public.notification_configs (id, reminder_1_hours, reminder_2_hours, is_act
 --
 
 COPY public.notification_queue (id, booking_id, user_id, message, priority, status, retry_count, error_message, created_at, updated_at, sent_at, next_retry_at, channel, recipient, payload, max_retries, expires_at) FROM stdin;
+d839db99-1d87-4edc-8bae-cffbf2fb0c41	900f63ae-e0a1-47af-b8f7-f154452c2f02	b9f03843-eee6-4607-ac5a-496c6faa9ea1	Recordatorio: Tu reserva es mañana a las 10:00	1	pending	0	\N	2026-02-18 23:57:09.846368+00	2026-02-18 23:57:09.846368+00	\N	\N	telegram	5391760292	{"booking_id": "900f63ae-e0a1-47af-b8f7-f154452c2f02", "start_time": "2026-02-20T10:00:00+00:00"}	3	2026-02-20 09:00:00+00
+ef8c665f-5f10-4ece-a1a2-53bd39208d44	940c5dbc-fb55-41f8-a02c-2180c89b1c6e	a1b2c3d4-e5f6-7890-abcd-000000000001	Recordatorio: Tu reserva es mañana a las 09:56	1	pending	0	\N	2026-02-18 23:57:09.846368+00	2026-02-18 23:57:09.846368+00	\N	\N	telegram	3000001	{"booking_id": "940c5dbc-fb55-41f8-a02c-2180c89b1c6e", "start_time": "2026-02-21T09:56:32.493754+00:00"}	3	2026-02-21 08:56:32.493754+00
+650867ac-0d9e-4dba-b8e7-4570467bd72e	\N	a1b2c3d4-e5f6-7890-abcd-000000000001	Test notification failed	0	failed	3	Max retries exceeded	2026-02-18 22:57:10.021631+00	2026-02-18 23:57:10.021631+00	\N	\N	telegram	3000001	{}	3	2026-02-19 00:57:10.021631+00
+155ed6c9-e191-43d8-b7fa-98d3ed5dac0b	\N	a1b2c3d4-e5f6-7890-abcd-000000000002	Test notification retry	0	pending	2	Network timeout	2026-02-18 23:27:10.216654+00	2026-02-18 23:57:10.216654+00	\N	\N	telegram	3000002	{}	3	2026-02-19 01:57:10.216654+00
+\.
+
+
+--
+-- Data for Name: provider_cache; Type: TABLE DATA; Schema: public; Owner: neondb_owner
+--
+
+COPY public.provider_cache (id, provider_id, provider_slug, data, cached_at, expires_at, created_at) FROM stdin;
+0e06df34-6d0d-492a-8454-287a52c24293	2eebc9bc-c2f8-46f8-9e78-7da0909fcca4	dr-roger-auto	{"name": "Dr. Roger Auto", "email": "dev.n8n.stax@gmail.com", "services": [{"id": "a7a019cb-3442-4f57-8877-1b04a1749c01", "name": "Consulta General", "duration": 30}], "schedules": [{"day": "Monday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Tuesday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Wednesday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Thursday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Friday", "end": "18:00:00", "start": "09:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+87b7c77a-6565-42a4-954f-51527db3475a	98d6e8db-0e93-4c62-a762-0ee0dd2aff29	dr-smith	{"name": "Dr. John Smith", "email": "john.smith@example.com", "services": [], "schedules": [], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+5a9c53cb-f50d-4af7-8e84-4547d03226cb	c5d0025d-b97c-4879-9692-73a92632bb79	dr-garcia	{"name": "Dra. María García", "email": "maria.garcia@example.com", "services": [{"id": "a17fef8e-7819-4bdb-8290-bf8d03a33001", "name": "Consulta General", "duration": 30}, {"id": "ec7907b3-5ece-470d-a82f-0a2744edf60a", "name": "Consulta Especializada", "duration": 45}, {"id": "9169ad3e-a9f2-4d0a-90f0-a4add5c8d4a6", "name": "Urgencia", "duration": 20}, {"id": "17f8e9ae-9ed1-4aae-96b9-446eed2c2637", "name": "Consulta General", "duration": 30}, {"id": "74080a7e-225d-4069-99ef-92bc23b12c14", "name": "Consulta Especializada", "duration": 45}, {"id": "8232916f-2e90-49b2-a26c-de59f3c5ead2", "name": "Urgencia", "duration": 20}], "schedules": [{"day": "Monday", "end": "18:00:00", "start": "10:00:00"}, {"day": "Wednesday", "end": "18:00:00", "start": "10:00:00"}, {"day": "Friday", "end": "18:00:00", "start": "10:00:00"}, {"day": "Monday", "end": "18:00:00", "start": "10:00:00"}, {"day": "Wednesday", "end": "18:00:00", "start": "10:00:00"}, {"day": "Friday", "end": "18:00:00", "start": "10:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+485a1f85-ae53-4546-8614-1147dce21c0e	73f97ddc-306c-42d4-bd08-46dc3ee96217	dr-juan-perez	{"name": "Dr. Juan Pérez", "email": "juan.perez@test.com", "services": [{"id": "6bbce11c-797e-4012-aa50-b888c014be68", "name": "Consulta General", "duration": 30}, {"id": "0fa1bc5e-c85f-43d7-a9bb-7291c26baced", "name": "Consulta Especializada", "duration": 45}, {"id": "ff7bb38b-8be2-47e6-89f8-7c518cc97caf", "name": "Urgencia", "duration": 20}, {"id": "85098b2f-4df4-496e-b8dd-8af745a757d6", "name": "Consulta General", "duration": 30}, {"id": "861c4baf-280e-4e4e-b2e6-20648e81da04", "name": "Consulta Especializada", "duration": 45}, {"id": "ce18af9c-fff7-4043-b8fd-dbb7ad66a4cf", "name": "Urgencia", "duration": 20}], "schedules": [{"day": "Monday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Tuesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Wednesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Thursday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Friday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Monday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Tuesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Wednesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Thursday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Friday", "end": "17:00:00", "start": "09:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+9285e576-f001-40b3-9e42-0ea136c31111	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	test-provider	{"name": "Test Provider", "email": "test@test.com", "services": [{"id": "3f8495a8-8701-4e69-a5da-ed4c1e24ae30", "name": "Consulta General", "duration": 30}, {"id": "9e4b71a3-9e3e-4b17-86d9-1145b15c07bf", "name": "Consulta Especializada", "duration": 45}, {"id": "0ed3faaa-1941-4941-beb5-ca8f4af456e2", "name": "Urgencia", "duration": 20}, {"id": "6a3a4039-6e44-4994-b331-c03a52f2992d", "name": "Consulta General", "duration": 30}, {"id": "755872aa-b646-4941-a9e7-54f48eefee82", "name": "Consulta Especializada", "duration": 45}, {"id": "9ad28913-7e98-404f-ace3-707ac532b846", "name": "Urgencia", "duration": 20}], "schedules": [{"day": "Monday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Tuesday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Wednesday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Thursday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Friday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Saturday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Sunday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Monday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Tuesday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Wednesday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Thursday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Friday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Saturday", "end": "23:59:59", "start": "00:00:00"}, {"day": "Sunday", "end": "23:59:59", "start": "00:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+ef577003-ee53-43a9-9cd3-a65290bacfe3	a1b2c3d4-e5f6-7890-abcd-ef1234567890	dr-test-provider	{"name": "Dr. Test Provider", "email": null, "services": [], "schedules": [{"day": "Monday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Tuesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Wednesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Thursday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Friday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Saturday", "end": "13:00:00", "start": "09:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+bb2949b5-a7f0-41ac-aaea-ac057093938a	b2c3d4e5-f6a7-8901-bcde-f12345678901	dra-test-long	{"name": "Dra. Test Long Slots", "email": null, "services": [], "schedules": [{"day": "Monday", "end": "18:00:00", "start": "10:00:00"}, {"day": "Wednesday", "end": "18:00:00", "start": "10:00:00"}, {"day": "Friday", "end": "18:00:00", "start": "10:00:00"}], "slot_duration": 60}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+576471f8-dea7-443a-82ff-b972dc61911f	c3d4e5f6-a7b8-9012-cdef-123456789012	dr-no-schedule	{"name": "Dr. No Schedule", "email": null, "services": [], "schedules": [], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+9a01f3d0-caa6-498c-b3f1-952922d47654	e5f6a7b8-c9d0-1234-efab-345678901234	dr-quick	{"name": "Dr. Quick Appointments", "email": null, "services": [], "schedules": [{"day": "Tuesday", "end": "12:00:00", "start": "08:00:00"}, {"day": "Thursday", "end": "12:00:00", "start": "08:00:00"}], "slot_duration": 15}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+55f8f5ad-f04a-4905-87a0-bef822664f4f	b1b2b3b4-c5d6-7890-abcd-000000000001	dr-alejandro-vera	{"name": "Dr. Alejandro Vera", "email": "alejandro.vera@clinic.com", "services": [{"id": "c255adb2-1657-434e-804f-0a68d185c6eb", "name": "Consulta General", "duration": 30}, {"id": "96ee9119-f407-41cc-b816-244d8c1f1ab4", "name": "Consulta Especializada", "duration": 45}, {"id": "5eb7ac08-ce05-45ea-8753-ef367eb8742f", "name": "Urgencia", "duration": 20}], "schedules": [{"day": "Monday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Tuesday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Wednesday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Thursday", "end": "18:00:00", "start": "09:00:00"}, {"day": "Friday", "end": "18:00:00", "start": "09:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+f9ace4ec-6f20-4d33-967b-2439b964e76e	b1b2b3b4-c5d6-7890-abcd-000000000002	dra-carmen-luz	{"name": "Dra. Carmen Luz", "email": "carmen.luz@clinic.com", "services": [{"id": "fb5b259a-33ee-413a-aac2-e48bc0cba754", "name": "Consulta General", "duration": 30}, {"id": "bc686116-64a8-4c11-8a02-d5915e62d11c", "name": "Consulta Especializada", "duration": 45}, {"id": "2c68d3b9-63b9-45aa-a0c9-fbfa9b08877e", "name": "Urgencia", "duration": 20}], "schedules": [{"day": "Monday", "end": "19:00:00", "start": "10:00:00"}, {"day": "Wednesday", "end": "19:00:00", "start": "10:00:00"}, {"day": "Friday", "end": "19:00:00", "start": "10:00:00"}], "slot_duration": 45}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+6806ebc4-b858-426f-8af4-9e251f95de04	b1b2b3b4-c5d6-7890-abcd-000000000003	dr-roberto-fuentes	{"name": "Dr. Roberto Fuentes", "email": "roberto.fuentes@therapy.com", "services": [{"id": "91973286-7da0-4b98-b8f8-c56ab225e4e8", "name": "Consulta General", "duration": 30}, {"id": "6ea99e31-ef0c-441a-8e87-2378fc0ba50f", "name": "Consulta Especializada", "duration": 45}], "schedules": [{"day": "Tuesday", "end": "20:00:00", "start": "08:00:00"}, {"day": "Thursday", "end": "20:00:00", "start": "08:00:00"}], "slot_duration": 60}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+3e80fb2d-a2c9-4281-b065-e06db988b14d	b1b2b3b4-c5d6-7890-abcd-000000000004	dra-lucia-mendez	{"name": "Dra. Lucia Mendez", "email": "lucia.mendez@quick.com", "services": [{"id": "bb4b13bf-92f6-4afe-94a6-0820bd9bf5ec", "name": "Consulta General", "duration": 30}, {"id": "ee0e1aa7-5e57-4484-b246-8636e8972d72", "name": "Urgencia", "duration": 20}], "schedules": [{"day": "Monday", "end": "21:00:00", "start": "07:00:00"}, {"day": "Wednesday", "end": "21:00:00", "start": "07:00:00"}, {"day": "Saturday", "end": "21:00:00", "start": "07:00:00"}, {"day": "Tuesday", "end": "21:00:00", "start": "07:00:00"}, {"day": "Thursday", "end": "21:00:00", "start": "07:00:00"}, {"day": "Friday", "end": "21:00:00", "start": "07:00:00"}], "slot_duration": 15}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+4cd1fc5e-a9f1-4f15-8e98-44cee5b1bb28	b1b2b3b4-c5d6-7890-abcd-000000000008	dr-schedule-test	{"name": "Dr. Schedule Test", "email": "schedule@test.com", "services": [{"id": "ecfd0478-cc41-476f-981c-aa5bf0d7ad73", "name": "Consulta General", "duration": 30}, {"id": "fccaa772-9008-4e57-a44e-dc60f3015798", "name": "Consulta Especializada", "duration": 45}, {"id": "d95dca5b-4b77-4c7d-8fab-9ed769d4b2ad", "name": "Urgencia", "duration": 20}], "schedules": [{"day": "Monday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Tuesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Wednesday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Thursday", "end": "17:00:00", "start": "09:00:00"}, {"day": "Friday", "end": "17:00:00", "start": "09:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+bf846748-e84e-4086-b3ec-341cbfff8513	b1b2b3b4-c5d6-7890-abcd-000000000009	dr-weekend-only	{"name": "Dr. Weekend Only", "email": "weekend@test.com", "services": [{"id": "5660e49e-dff4-41ae-94f5-415b0ee4b56a", "name": "Consulta General", "duration": 30}], "schedules": [{"day": "Saturday", "end": "15:00:00", "start": "09:00:00"}, {"day": "Sunday", "end": "15:00:00", "start": "09:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
+b20be4e5-f8ff-4f74-9f9a-f86bbc0f1b36	b1b2b3b4-c5d6-7890-abcd-000000000010	dr-night-shift	{"name": "Dr. Night Shift", "email": "night@test.com", "services": [{"id": "54f9e5bb-2503-4135-b6ad-8db5158ac61c", "name": "Consulta General", "duration": 30}], "schedules": [{"day": "Monday", "end": "23:00:00", "start": "18:00:00"}, {"day": "Wednesday", "end": "23:00:00", "start": "18:00:00"}, {"day": "Friday", "end": "23:00:00", "start": "18:00:00"}], "slot_duration": 30}	2026-02-18 23:59:55.821697+00	2026-02-19 00:59:55.821697+00	2026-02-18 23:59:55.821697+00
 \.
 
 
@@ -2401,6 +2430,15 @@ b2c3d4e5-f6a7-8901-bcde-f12345678901	\N	Dra. Test Long Slots	\N	\N	30	2	t	2026-0
 c3d4e5f6-a7b8-9012-cdef-123456789012	\N	Dr. No Schedule	\N	\N	30	2	t	2026-02-10 13:17:44.637806+00	\N	dr-no-schedule	30
 d4e5f6a7-b8c9-0123-defa-234567890123	\N	Dr. Deleted	\N	\N	30	2	t	2026-02-10 13:17:44.783511+00	2026-02-10 13:17:44.783511+00	dr-deleted	30
 e5f6a7b8-c9d0-1234-efab-345678901234	\N	Dr. Quick Appointments	\N	\N	30	2	t	2026-02-10 13:17:44.933549+00	\N	dr-quick	15
+b1b2b3b4-c5d6-7890-abcd-000000000001	\N	Dr. Alejandro Vera	alejandro.vera@clinic.com	alejandro.vera@gmail.com	30	4	t	2025-12-20 23:40:44.180659+00	\N	dr-alejandro-vera	30
+b1b2b3b4-c5d6-7890-abcd-000000000002	\N	Dra. Carmen Luz	carmen.luz@clinic.com	\N	45	2	t	2026-01-04 23:40:44.349277+00	\N	dra-carmen-luz	45
+b1b2b3b4-c5d6-7890-abcd-000000000003	\N	Dr. Roberto Fuentes	roberto.fuentes@therapy.com	roberto.f@gmail.com	60	24	t	2026-01-19 23:40:44.509135+00	\N	dr-roberto-fuentes	60
+b1b2b3b4-c5d6-7890-abcd-000000000004	\N	Dra. Lucia Mendez	lucia.mendez@quick.com	\N	15	1	t	2026-01-29 23:40:44.727938+00	\N	dra-lucia-mendez	15
+b1b2b3b4-c5d6-7890-abcd-000000000005	\N	Dr. Disabled Test	disabled@test.com	\N	30	2	f	2026-02-03 23:40:44.8891+00	\N	dr-disabled-seed	30
+b1b2b3b4-c5d6-7890-abcd-000000000006	\N	Dr. Old Provider	old@provider.com	\N	30	2	t	2025-11-20 23:40:45.069158+00	2026-01-19 23:40:45.069158+00	dr-old-provider-seed	30
+b1b2b3b4-c5d6-7890-abcd-000000000008	\N	Dr. Schedule Test	schedule@test.com	\N	30	2	t	2026-02-18 23:40:45.228056+00	\N	dr-schedule-test	30
+b1b2b3b4-c5d6-7890-abcd-000000000009	\N	Dr. Weekend Only	weekend@test.com	\N	30	2	t	2026-02-18 23:40:45.437533+00	\N	dr-weekend-only	30
+b1b2b3b4-c5d6-7890-abcd-000000000010	\N	Dr. Night Shift	night@test.com	\N	30	2	t	2026-02-18 23:40:45.601384+00	\N	dr-night-shift	30
 \.
 
 
@@ -2455,6 +2493,32 @@ ae410f0d-dd5a-4892-9d73-9d42bc04fcb9	b2c3d4e5-f6a7-8901-bcde-f12345678901	Wednes
 8743a8ea-be8c-43c9-8f96-fa0bbeef9eab	b2c3d4e5-f6a7-8901-bcde-f12345678901	Friday	10:00:00	18:00:00	t
 e27329be-f1f4-43c5-afd1-d103c9884103	e5f6a7b8-c9d0-1234-efab-345678901234	Tuesday	08:00:00	12:00:00	t
 22b95497-d804-4f9a-a845-020cf70ec471	e5f6a7b8-c9d0-1234-efab-345678901234	Thursday	08:00:00	12:00:00	t
+56245c48-d87e-4128-a3c6-5d0873d6981a	b1b2b3b4-c5d6-7890-abcd-000000000001	Monday	09:00:00	18:00:00	t
+248b5cbe-3930-4795-b1d0-c0bcc514f27d	b1b2b3b4-c5d6-7890-abcd-000000000001	Tuesday	09:00:00	18:00:00	t
+0b09fd72-067d-4bd7-901d-878859e4e5c3	b1b2b3b4-c5d6-7890-abcd-000000000001	Wednesday	09:00:00	18:00:00	t
+e45b6d39-d22e-4079-8f83-26cd4a41fd31	b1b2b3b4-c5d6-7890-abcd-000000000001	Thursday	09:00:00	18:00:00	t
+bc125258-ba96-4ec0-8e7e-1a4dc07b4925	b1b2b3b4-c5d6-7890-abcd-000000000001	Friday	09:00:00	18:00:00	t
+7df10605-a755-4412-ad1f-855024daa828	b1b2b3b4-c5d6-7890-abcd-000000000002	Monday	10:00:00	19:00:00	t
+937b9431-6a95-46e4-8123-b3a616465167	b1b2b3b4-c5d6-7890-abcd-000000000002	Wednesday	10:00:00	19:00:00	t
+09481566-35b5-40d4-9906-48ff6ac0c540	b1b2b3b4-c5d6-7890-abcd-000000000002	Friday	10:00:00	19:00:00	t
+75b48c9b-710f-4947-a078-09615155f558	b1b2b3b4-c5d6-7890-abcd-000000000003	Tuesday	08:00:00	20:00:00	t
+46cc7383-1458-4178-b899-94015a7023e7	b1b2b3b4-c5d6-7890-abcd-000000000003	Thursday	08:00:00	20:00:00	t
+bbe13396-4250-4b1f-8f5d-4356dc1639f2	b1b2b3b4-c5d6-7890-abcd-000000000004	Monday	07:00:00	21:00:00	t
+6d63ee85-785f-4bc9-bc81-c75685779678	b1b2b3b4-c5d6-7890-abcd-000000000004	Wednesday	07:00:00	21:00:00	t
+a89a7735-1203-4a93-a423-ca26ed521942	b1b2b3b4-c5d6-7890-abcd-000000000004	Saturday	07:00:00	21:00:00	t
+103320c7-3b03-446d-97e7-c47f6dc610e8	b1b2b3b4-c5d6-7890-abcd-000000000004	Tuesday	07:00:00	21:00:00	t
+cddb319c-643a-4f5b-9a57-f0a5b718b0ba	b1b2b3b4-c5d6-7890-abcd-000000000004	Thursday	07:00:00	21:00:00	t
+1d7fc00e-0c2d-418c-aebe-83e5cdc25f77	b1b2b3b4-c5d6-7890-abcd-000000000004	Friday	07:00:00	21:00:00	t
+60e30d17-5824-4df9-974d-33520ea46347	b1b2b3b4-c5d6-7890-abcd-000000000008	Monday	09:00:00	17:00:00	t
+daa83ced-d5a7-4a3e-93f8-86ec232817c2	b1b2b3b4-c5d6-7890-abcd-000000000008	Tuesday	09:00:00	17:00:00	t
+584bca54-694d-45cf-ac95-5ac36aa84980	b1b2b3b4-c5d6-7890-abcd-000000000008	Wednesday	09:00:00	17:00:00	t
+31e72eff-3869-4fc4-b90a-c400d6dde2db	b1b2b3b4-c5d6-7890-abcd-000000000008	Thursday	09:00:00	17:00:00	t
+47fcb019-a697-4bb5-9fd0-5f07bd382f03	b1b2b3b4-c5d6-7890-abcd-000000000008	Friday	09:00:00	17:00:00	t
+c69f2d0c-c81a-4c0c-8ad2-7eab25741e80	b1b2b3b4-c5d6-7890-abcd-000000000009	Saturday	09:00:00	15:00:00	t
+0fc0f11f-a5be-40e5-9c98-8b5e8e3dc5bc	b1b2b3b4-c5d6-7890-abcd-000000000009	Sunday	09:00:00	15:00:00	t
+36e5ef2c-0bf4-4519-b510-ad931a04c576	b1b2b3b4-c5d6-7890-abcd-000000000010	Monday	18:00:00	23:00:00	t
+520c690d-8782-4065-af73-fdbd0dce1d7b	b1b2b3b4-c5d6-7890-abcd-000000000010	Wednesday	18:00:00	23:00:00	t
+adbdcf04-6368-42ef-966f-a114b8d01c90	b1b2b3b4-c5d6-7890-abcd-000000000010	Friday	18:00:00	23:00:00	t
 \.
 
 
@@ -2466,6 +2530,13 @@ COPY public.security_firewall (id, entity_id, strike_count, is_blocked, blocked_
 068efb91-b4bb-473a-b08c-fa69aa01686d	telegram:CERT_TEST_USER	1	f	\N	2026-01-16 21:20:19.857775+00	2026-01-16 21:20:19.857775+00	2026-01-16 21:20:19.857775+00
 bd5475e3-0806-4b8b-9fed-c9b31f062fd4	entity_123	1	f	\N	2026-01-16 22:00:17.802872+00	2026-01-16 22:00:17.802872+00	2026-01-16 22:00:17.802872+00
 dc6429f9-b971-4e67-b89a-7caa052b506c	telegram:5391760292	1	f	\N	2026-01-16 22:06:44.832169+00	2026-01-16 22:06:44.832169+00	2026-01-16 22:06:44.832169+00
+a7ab82c3-a1d8-4db3-8248-cc858f236be1	telegram:3000014	1	f	\N	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00
+1a325040-ffc7-4f41-9b2d-9fefb95b51ab	telegram:3000015	3	f	\N	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00
+4eaad77f-d484-4cdb-8857-9392e79c9647	telegram:3000016	5	t	2026-02-19 01:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00
+01019061-362a-4f38-8d16-f394cd8b478e	telegram:999999001	0	f	\N	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00
+9812623d-7058-43eb-8690-c4eff15f51a7	telegram:999999002	10	t	\N	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00
+c97d96a4-9a02-45a1-ae57-d00f8e22ef3c	ip:192.168.1.100	2	f	\N	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00
+52dc06b7-f2de-4882-924e-2e15c3286565	ip:10.0.0.50	7	t	2026-02-19 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00	2026-02-18 23:56:56.677985+00
 \.
 
 
@@ -2493,6 +2564,21 @@ ce18af9c-fff7-4043-b8fd-dbb7ad66a4cf	73f97ddc-306c-42d4-bd08-46dc3ee96217	Urgenc
 6a3a4039-6e44-4994-b331-c03a52f2992d	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	Consulta General	Consulta médica general	30	50.00	standard	t
 755872aa-b646-4941-a9e7-54f48eefee82	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	Consulta Especializada	Consulta con especialista	45	80.00	premium	t
 9ad28913-7e98-404f-ace3-707ac532b846	11f3d1c8-aba8-4343-b2b9-3e81c30a1da2	Urgencia	Atención de urgencia	20	120.00	emergency	t
+c255adb2-1657-434e-804f-0a68d185c6eb	b1b2b3b4-c5d6-7890-abcd-000000000001	Consulta General	Consulta médica general	30	50.00	standard	t
+fb5b259a-33ee-413a-aac2-e48bc0cba754	b1b2b3b4-c5d6-7890-abcd-000000000002	Consulta General	Consulta médica general	30	50.00	standard	t
+91973286-7da0-4b98-b8f8-c56ab225e4e8	b1b2b3b4-c5d6-7890-abcd-000000000003	Consulta General	Consulta médica general	30	50.00	standard	t
+bb4b13bf-92f6-4afe-94a6-0820bd9bf5ec	b1b2b3b4-c5d6-7890-abcd-000000000004	Consulta General	Consulta médica general	30	50.00	standard	t
+ecfd0478-cc41-476f-981c-aa5bf0d7ad73	b1b2b3b4-c5d6-7890-abcd-000000000008	Consulta General	Consulta médica general	30	50.00	standard	t
+5660e49e-dff4-41ae-94f5-415b0ee4b56a	b1b2b3b4-c5d6-7890-abcd-000000000009	Consulta General	Consulta médica general	30	50.00	standard	t
+54f9e5bb-2503-4135-b6ad-8db5158ac61c	b1b2b3b4-c5d6-7890-abcd-000000000010	Consulta General	Consulta médica general	30	50.00	standard	t
+96ee9119-f407-41cc-b816-244d8c1f1ab4	b1b2b3b4-c5d6-7890-abcd-000000000001	Consulta Especializada	Consulta con especialista	45	80.00	premium	t
+bc686116-64a8-4c11-8a02-d5915e62d11c	b1b2b3b4-c5d6-7890-abcd-000000000002	Consulta Especializada	Consulta con especialista	45	80.00	premium	t
+6ea99e31-ef0c-441a-8e87-2378fc0ba50f	b1b2b3b4-c5d6-7890-abcd-000000000003	Consulta Especializada	Consulta con especialista	45	80.00	premium	t
+fccaa772-9008-4e57-a44e-dc60f3015798	b1b2b3b4-c5d6-7890-abcd-000000000008	Consulta Especializada	Consulta con especialista	45	80.00	premium	t
+5eb7ac08-ce05-45ea-8753-ef367eb8742f	b1b2b3b4-c5d6-7890-abcd-000000000001	Urgencia	Atención de urgencia	20	120.00	emergency	t
+2c68d3b9-63b9-45aa-a0c9-fbfa9b08877e	b1b2b3b4-c5d6-7890-abcd-000000000002	Urgencia	Atención de urgencia	20	120.00	emergency	t
+ee0e1aa7-5e57-4484-b246-8636e8972d72	b1b2b3b4-c5d6-7890-abcd-000000000004	Urgencia	Atención de urgencia	20	120.00	emergency	t
+d95dca5b-4b77-4c7d-8fab-9ed769d4b2ad	b1b2b3b4-c5d6-7890-abcd-000000000008	Urgencia	Atención de urgencia	20	120.00	emergency	t
 \.
 
 
@@ -2614,6 +2700,11 @@ fcce4887-c2db-40a8-85a5-efebd69dc320	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{
 c49a3660-4d6f-4429-9dd5-d8868f67a793	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 23:12:02.914508+00	\N	f	\N
 fd9b3b72-86e5-4af1-8348-b5e627c44046	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 23:14:58.043939+00	\N	f	\N
 6d27cd1e-5f21-4589-98c5-97e51f68b820	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{"system_warning": null, "severity_reason": "DEFAULT", "rate_limit_exceeded": false, "circuit_breaker_state": "CLOSED"}	\N	2026-02-11 23:15:25.59013+00	\N	f	\N
+c954c5a9-7a7e-46f7-8112-44d81e75d270	BB_03_Availability_Engine	exec_001	DATABASE	LOW	Query timeout on availability check	Error at line 45	{"query": "SELECT slots..."}	\N	2026-02-18 21:57:42.072078+00	\N	f	\N
+aee24adf-b282-48b3-8c04-140c3190d1a8	BB_04_GCal_Sync	exec_002	API	MEDIUM	Google Calendar API rate limit	\N	{"api": "gcal", "status": 429}	\N	2026-02-18 22:57:42.072078+00	2026-02-18 23:27:42.072078+00	t	Rate limit reset
+6031629e-cbb8-48c0-9559-374fab72a1cc	BB_05_Reminder_Worker	exec_003	NETWORK	HIGH	Failed to send Telegram notification	Connection refused	{"chat_id": "3000001"}	a1b2c3d4-e5f6-7890-abcd-000000000001	2026-02-18 23:12:42.072078+00	\N	f	\N
+43743043-c212-4ee9-8a16-88f55a9946a0	BB_01_Telegram_Bot	exec_004	VALIDATION	LOW	Invalid message format received	\N	{"message_id": 12345}	a1b2c3d4-e5f6-7890-abcd-000000000002	2026-02-18 23:27:42.072078+00	\N	f	\N
+9e0f412d-223c-46a9-922e-cde99f969936	BB_02_Booking_Flow	exec_005	LOGIC	MEDIUM	Concurrent booking attempt detected	\N	{"provider_id": "b1b2b3b4-c5d6-7890-abcd-000000000001"}	\N	2026-02-18 23:42:42.072078+00	\N	f	\N
 \.
 
 
@@ -2623,9 +2714,12 @@ fd9b3b72-86e5-4af1-8348-b5e627c44046	UNKNOWN	UNKNOWN	UNKNOWN	MEDIUM	UNKNOWN	[]	{
 
 COPY public.users (id, telegram_id, first_name, last_name, username, phone_number, rut, role, language_code, metadata, created_at, updated_at, deleted_at, password_hash, last_selected_provider_id) FROM stdin;
 b9f03843-eee6-4607-ac5a-496c6faa9ea1	5391760292	Roger	Gallegos	\N	\N	11111111-1	admin	en	{"email": "dev.n8n.stax@gmail.com"}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000001	3000001	Juan	Pérez	juan_perez	+56912345678	12345678-9	user	es	{"source": "seed_test"}	2026-01-19 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
 41ded616-b5c7-44ea-bed2-b9f9135c7320	888888888	Banned User	\N	banned_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N
 c28d963b-4ea0-4861-ac80-9c79cb55370f	777777777	Incomplete User	\N	incomplete_tester	\N	\N	user	es	{}	2026-01-15 14:52:06.081827+00	2026-01-15 14:52:06.081827+00	\N	\N	\N
 d5d85414-4c5e-40ca-890d-cb91c93e4095	888777666	System Admin	\N	admin	\N	\N	admin	es	{}	2026-01-24 20:42:41.773789+00	2026-01-24 20:43:20.420308+00	\N	$2a$06$mHxcDiBy1pvl.RUnko.u.uNpsSP29MqlUqyEbPYXgJRWSdNUvfnLm	\N
+a1b2c3d4-e5f6-7890-abcd-000000000002	3000002	María	González	maria_g	+56923456789	98765432-1	user	es	{"source": "seed_test"}	2026-01-24 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000003	3000003	Carlos	López	carlos_loy	+56934567890	11222333-4	user	es	{"source": "seed_test"}	2026-01-29 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
 7b76edda-dd8a-41a1-8391-99bbe2f5fcf1	1000001	Ana	Perez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
 ca49f72a-6c1a-47d4-9780-6f0408c11211	1000002	Carlos	Gonzalez	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
 5f9f9676-93db-4df1-8131-0c4a69bd0c95	1000003	Beatriz	Silva	\N	\N	\N	user	es	{}	2026-01-19 12:39:42.802392+00	2026-01-19 12:39:42.802392+00	\N	\N	\N
@@ -2646,7 +2740,24 @@ af1172c7-508b-44bc-a82a-5d368d7fd631	2000003	Jean-Pierre	Núñez y Castillo	\N	\
 4f4d34d2-c89d-4154-a0a3-95540f523ba3	2000008	Ana-Sofía	Muñoz	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 dc167392-26aa-4006-91cc-7a517e6ee903	2000009	Lúcia	Ibañez	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
 b1e95f01-49b4-423c-b530-b4dc265e9082	2000010	Zoë	Almohávar	\N	\N	\N	user	es	{}	2026-01-19 13:06:46.878268+00	2026-01-19 13:06:46.878268+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000004	3000004	Ana	Martínez	ana_m	+56945678901	44555666-7	user	es	{"source": "seed_test"}	2026-02-03 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000005	3000005	Pedro	Sánchez	pedro_s	+56956789012	77888999-0	user	es	{"source": "seed_test"}	2026-02-08 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000006	3000006	Laura	Fernández	lauraf	+56967890123	11122333-4	user	es	{"source": "seed_test"}	2026-02-10 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
 6daa9018-1df4-4dc3-a761-100e1ae11a09	123456789	Test	User	test_user	\N	\N	user	es	{}	2026-01-26 21:27:45.344063+00	2026-01-26 21:27:45.344063+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000007	3000007	Diego	Rodríguez	diego_r	+56978901234	44555666-7	user	es	{"source": "seed_test"}	2026-02-13 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000008	3000008	Sofia	Díaz	sofia_d	+56989012345	\N	user	en	{"source": "seed_test", "international": true}	2026-02-15 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000009	3000009	Miguel	Hernández	miguel_h	+56990123456	99887766-5	user	es	{"source": "seed_test"}	2026-02-16 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000010	3000010	Carmen	Ruiz	carmen_r	+56901234567	55443322-1	user	es	{"source": "seed_test"}	2026-02-17 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000011	3000011	José María	De la Cruz	jose_maria	\N	\N	user	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000012	3000012	François	Müller	francois_ms	\N	\N	user	en	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000014	3000014	User Strike 1	Test	strike_1	\N	\N	user	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000015	3000015	User Strike 3	Test	strike_3	\N	\N	user	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000016	3000016	User Strike 5	Test	strike_5	\N	\N	user	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000017	3000017	Deleted User	Test	deleted_user	\N	\N	user	es	{"source": "seed_test"}	2026-02-08 23:36:24.78958+00	2026-02-13 23:36:24.78958+00	2026-02-13 23:36:24.78958+00	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000018	3000018	Load Test	User 1	load_1	\N	\N	user	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000019	3000019	Load Test	User 2	load_2	\N	\N	user	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000020	3000020	Load Test	User 3	load_3	\N	\N	user	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
+a1b2c3d4-e5f6-7890-abcd-000000000021	3000021	Admin	Test	admin_test	\N	\N	admin	es	{"source": "seed_test"}	2026-02-18 23:36:24.78958+00	2026-02-18 23:36:24.78958+00	\N	\N	\N
 f6a7b8c9-d0e1-2345-fabc-456789012345	999000999	Test Booker	\N	\N	\N	\N	user	es	{}	2026-02-10 13:17:46.32768+00	2026-02-10 13:17:46.32768+00	\N	\N	\N
 \.
 
@@ -2662,7 +2773,7 @@ SELECT pg_catalog.setval('error_handling.error_aggregations_id_seq', 1, false);
 -- Name: error_logs_id_seq; Type: SEQUENCE SET; Schema: error_handling; Owner: neondb_owner
 --
 
-SELECT pg_catalog.setval('error_handling.error_logs_id_seq', 1, false);
+SELECT pg_catalog.setval('error_handling.error_logs_id_seq', 4, true);
 
 
 --
@@ -2902,6 +3013,22 @@ ALTER TABLE ONLY public.notification_configs
 
 ALTER TABLE ONLY public.notification_queue
     ADD CONSTRAINT notification_queue_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: provider_cache provider_cache_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.provider_cache
+    ADD CONSTRAINT provider_cache_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: provider_cache provider_cache_provider_slug_key; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.provider_cache
+    ADD CONSTRAINT provider_cache_provider_slug_key UNIQUE (provider_slug);
 
 
 --
@@ -3286,6 +3413,20 @@ CREATE INDEX idx_notification_queue_user_id ON public.notification_queue USING b
 
 
 --
+-- Name: idx_provider_cache_expires; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_provider_cache_expires ON public.provider_cache USING btree (expires_at);
+
+
+--
+-- Name: idx_provider_cache_slug; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX idx_provider_cache_slug ON public.provider_cache USING btree (provider_slug);
+
+
+--
 -- Name: idx_providers_slug; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
@@ -3526,6 +3667,14 @@ ALTER TABLE ONLY public.bookings
 
 
 --
+-- Name: provider_cache provider_cache_provider_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.provider_cache
+    ADD CONSTRAINT provider_cache_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.providers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: providers providers_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: neondb_owner
 --
 
@@ -3713,5 +3862,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE cloud_admin IN SCHEMA public GRANT ALL ON TABL
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 2OKAu9V3JyKMYd4hTekzDNj4lfdNIQjtnKY7PpJmd3jo880BJfFS2kUnx3O8bpt
+\unrestrict 4L2uxobDP2tc8skXkDbO2x5ohsFYKM4SNH9aHPrln5OpK0ZMcWS7Lnyt5RfEF1G
 

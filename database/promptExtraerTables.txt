@@ -1,4 +1,4 @@
-Extrae esquema de @database/schema.sql en JSON compacto minimalista (enum + tipos PostgreSQL incluidos).
+Extrae esquema de @database/schema.sql en JSON compacto minimalista (enum + tipos PostgreSQL incluidos) al archivo onlyTables.md.
 
 FORMATO: [{"name":"tabla","cols":[{"name":"col","type":"varchar(255)","null":true,"pk":false,"fk":"tabla.col","enum":["val1","val2"]},{"name":"id","type":"serial","pk":true}],"pk":["id"],"idx":["idx_name"],"enums":{}}]
 

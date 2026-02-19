@@ -9,14 +9,14 @@
         "options": {}
       },
       "id": "webhook",
-      "name": "\ud83e\uddea Test Webhook",
+      "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
         300
       ],
-      "webhookId": "telegram-webhook-test"
+      "webhookId": "telegram-webhook-prod"
     },
     {
       "parameters": {
@@ -33,10 +33,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  \n  // Parse Telegram message format\n  const message = raw.message || {};\n  const chatId = message.chat?.id;\n  const text = sanitize(message.text || '');\n  const firstName = sanitize(message.from?.first_name || 'User');\n  \n  if (!chatId) return fail('VAL_NO_CHAT_ID', 'Missing chat.id in message');\n  \n  return ok({\n    chat_id: chatId,\n    text: text,\n    first_name: firstName,\n    command: text.split(' ')[0] || ''\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'telegram', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '').substring(0, 500) : '';\n\nconst INTENTS = {\n  availability: ['disponibilidad', 'horarios', 'horario', '/availability', 'ver horas', 'horas disponibles', 'available'],\n  booking: ['agendar', 'reservar', '/book', 'cita', 'book', 'reserva', 'quiero agendar'],\n  cancel: ['cancelar', '/cancel', 'anular', 'borrar reserva'],\n  reschedule: ['reagendar', 'cambiar', '/reschedule', 'mover cita', 'reprogramar'],\n  help: ['ayuda', 'help', '/start', '/help', 'hola', 'hi', 'hello'],\n  admin: ['/admin', '/config', 'admin']\n};\n\nconst detectIntent = (text) => {\n  const t = text.toLowerCase().trim();\n  for (const [intent, keywords] of Object.entries(INTENTS)) {\n    if (keywords.some(k => t.includes(k.toLowerCase()))) return intent;\n  }\n  return 'unknown';\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const message = raw.message || {};\n  const from = message.from || {};\n  const chat = message.chat || {};\n  \n  const chatId = chat.id;\n  const telegramId = from.id;\n  const text = sanitize(message.text || '');\n  const firstName = sanitize(from.first_name || 'User');\n  const username = sanitize(from.username || '');\n  \n  if (!chatId) return fail('VAL_NO_CHAT_ID', 'Missing chat.id in message');\n  if (!telegramId) return fail('VAL_NO_USER_ID', 'Missing from.id in message');\n  if (!text) return fail('VAL_EMPTY_TEXT', 'Message has no text');\n\n  const intent = detectIntent(text);\n  \n  return ok({\n    chat_id: chatId,\n    telegram_id: telegramId,\n    text: text,\n    first_name: firstName,\n    username: username,\n    intent: intent,\n    raw_intent: text.split(' ')[0] || '',\n    timestamp: DateTime.now().setZone(TIMEZONE).toISO()\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
       "id": "guard",
-      "name": "Guard",
+      "name": "Parse & Route Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -86,12 +86,17 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "workflowId": {
+          "__rl": true,
+          "value": "RFgFNM0HqcSaWkma",
+          "mode": "id"
+        },
+        "inputData": "={{ { telegram_id: $json.data.telegram_id, action: 'access' } }}"
       },
-      "id": "success",
-      "name": "Success",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "check_security",
+      "name": "Check Security",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
       "position": [
         600,
         300
@@ -99,35 +104,324 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nreturn [{ json: { success: false, error_code: 'TG_ERROR', error_message: 'Telegram gateway error', data: null, _meta: meta() } }];"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-security",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
       },
-      "id": "error",
-      "name": "Error",
-      "type": "n8n-nodes-base.code",
+      "id": "route_security",
+      "name": "Security OK?",
+      "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        600,
-        500
+        800,
+        300
       ]
     },
     {
-      "parameters": {},
-      "id": "output",
-      "name": "Output",
-      "type": "n8n-nodes-base.noOp",
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "availability",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-availability",
+                    "leftValue": "={{ $('Parse & Route Intent').item.json.data.intent }}",
+                    "rightValue": "availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "booking",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-booking",
+                    "leftValue": "={{ $('Parse & Route Intent').item.json.data.intent }}",
+                    "rightValue": "booking",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "cancel",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-cancel",
+                    "leftValue": "={{ $('Parse & Route Intent').item.json.data.intent }}",
+                    "rightValue": "cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "help",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-help",
+                    "leftValue": "={{ $('Parse & Route Intent').item.json.data.intent }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "admin",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "intent-admin",
+                    "leftValue": "={{ $('Parse & Route Intent').item.json.data.intent }}",
+                    "rightValue": "admin",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route_intent",
+      "name": "Route Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "hEPxeVIU1VQIldBL",
+          "mode": "id"
+        },
+        "inputData": "={{ { provider_slug: 'default', telegram_id: $('Parse & Route Intent').item.json.data.telegram_id, chat_id: $('Parse & Route Intent').item.json.data.chat_id } }}"
+      },
+      "id": "exec_availability",
+      "name": "Exec Availability",
+      "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1,
       "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Fz0t9SdpNqBs2O9D",
+          "mode": "id"
+        },
+        "inputData": "={{ { telegram_id: $('Parse & Route Intent').item.json.data.telegram_id, chat_id: $('Parse & Route Intent').item.json.data.chat_id, text: $('Parse & Route Intent').item.json.data.text } }}"
+      },
+      "id": "exec_booking",
+      "name": "Exec Booking",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "PGkoP5Ahu13SCrfj",
+          "mode": "id"
+        },
+        "inputData": "={{ { telegram_id: $('Parse & Route Intent').item.json.data.telegram_id, chat_id: $('Parse & Route Intent').item.json.data.chat_id } }}"
+      },
+      "id": "exec_cancel",
+      "name": "Exec Cancel",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'telegram', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst helpText = `\ud83d\udc4b *Bienvenido al Sistema de Reservas*\n\nComandos disponibles:\n\u2022 /book - Agendar una reserva\n\u2022 /availability - Ver horarios disponibles\n\u2022 /cancel - Cancelar tu reserva\n\u2022 /help - Mostrar esta ayuda\n\nEscribe tu consulta en lenguaje natural.`;\n\nreturn ok({ message: helpText, chat_id: $('Parse & Route Intent').item.json.data.chat_id });"
+      },
+      "id": "exec_help",
+      "name": "Exec Help",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'telegram', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nreturn ok({ message: '\ud83d\udd12 Panel de administraci\u00f3n - Requiere autenticaci\u00f3n', chat_id: $('Parse & Route Intent').item.json.data.chat_id });"
+      },
+      "id": "exec_admin",
+      "name": "Exec Admin",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'telegram', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst unknownText = `\ud83e\udd14 No entend\u00ed tu mensaje.\n\nComandos disponibles:\n\u2022 /book - Agendar\n\u2022 /availability - Ver horarios\n\u2022 /cancel - Cancelar\n\u2022 /help - Ayuda`;\n\nreturn ok({ message: unknownText, chat_id: $('Parse & Route Intent').item.json.data.chat_id });"
+      },
+      "id": "exec_unknown",
+      "name": "Exec Unknown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        750
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.data.chat_id || $('Parse & Route Intent').item.json.data.chat_id }}",
+        "text": "={{ $json.data.message || $json.error_message || 'Procesado' }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send_response",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1400,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "U8P4P8JT8XwCoIzD"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'telegram', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nreturn [{ json: { success: false, error_code: 'SEC_BLOCKED', error_message: 'User is blocked or rate limited', data: null, _meta: meta() } }];"
+      },
+      "id": "error_security",
+      "name": "Error Security",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
         800,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'telegram', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nreturn $input.all();"
+      },
+      "id": "error_guard",
+      "name": "Error Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_01_Telegram_Gateway';\nconst VERSION = 'v2.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'telegram', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\ntry {\n  const input = $input.all();\n  if (!input?.length) {\n    return [{ json: { success: true, error_code: null, error_message: null, data: { processed: true }, _meta: meta() } }];\n  }\n  return input;\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "format_output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
         400
       ]
     }
   ],
   "connections": {
-    "\ud83e\uddea Test Webhook": {
+    "Webhook": {
       "main": [
         [
           {
-            "node": "Guard",
+            "node": "Parse & Route Intent",
             "type": "main",
             "index": 0
           }
@@ -138,14 +432,14 @@
       "main": [
         [
           {
-            "node": "Guard",
+            "node": "Parse & Route Intent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard": {
+    "Parse & Route Intent": {
       "main": [
         [
           {
@@ -160,36 +454,188 @@
       "main": [
         [
           {
-            "node": "Error",
+            "node": "Error Guard",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Success",
+            "node": "Check Security",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Success": {
+    "Error Guard": {
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Error": {
+    "Check Security": {
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Security OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Security OK?": {
+      "main": [
+        [
+          {
+            "node": "Route Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Security",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Security": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Intent": {
+      "main": [
+        [
+          {
+            "node": "Exec Availability",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exec Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exec Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exec Help",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exec Admin",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exec Unknown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Availability": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Booking": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Cancel": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Help": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Admin": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Unknown": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Response": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }

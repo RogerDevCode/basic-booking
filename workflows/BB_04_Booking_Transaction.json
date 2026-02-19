@@ -3,23 +3,6 @@
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "book-transaction",
-        "responseMode": "lastNode",
-        "options": {}
-      },
-      "id": "webhook",
-      "name": "\ud83e\uddea Test Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        0,
-        300
-      ],
-      "webhookId": "book-transaction-test"
-    },
-    {
-      "parameters": {
         "inputSource": "passthrough"
       },
       "id": "trigger",
@@ -28,20 +11,20 @@
       "typeVersion": 1.1,
       "position": [
         0,
-        500
+        300
       ]
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Transaction';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  return ok(raw);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_Booking_Transaction';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'orchestrator', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst ACTION_MAP = {\n  'booking': 'create',\n  'book': 'create',\n  'agendar': 'create',\n  'reservar': 'create',\n  'create': 'create',\n  'cancel': 'cancel',\n  'cancelar': 'cancel',\n  'anular': 'cancel',\n  'reschedule': 'reschedule',\n  'reagendar': 'reschedule',\n  'cambiar': 'reschedule'\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const text = (raw.text || '').toLowerCase();\n  \n  let action = raw.action || 'create';\n  \n  if (!raw.action) {\n    for (const [keyword, mappedAction] of Object.entries(ACTION_MAP)) {\n      if (text.includes(keyword)) {\n        action = mappedAction;\n        break;\n      }\n    }\n  }\n  \n  const validActions = ['create', 'cancel', 'reschedule'];\n  if (!validActions.includes(action)) {\n    action = 'create';\n  }\n\n  return ok({\n    action: action,\n    telegram_id: raw.telegram_id,\n    chat_id: raw.chat_id,\n    provider_id: raw.provider_id || null,\n    user_id: raw.user_id || null,\n    booking_id: raw.booking_id || null,\n    start_time: raw.start_time || null,\n    end_time: raw.end_time || null,\n    service_id: raw.service_id || null,\n    raw: raw\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID}: ${e.message}`);\n}"
       },
-      "id": "guard",
-      "name": "Guard",
+      "id": "determine_action",
+      "name": "Determine Action",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         200,
-        400
+        300
       ]
     },
     {
@@ -50,7 +33,7 @@
         "rules": {
           "values": [
             {
-              "outputKey": "error",
+              "outputKey": "create",
               "conditions": {
                 "options": {
                   "caseSensitive": true,
@@ -58,11 +41,54 @@
                 },
                 "conditions": [
                   {
-                    "id": "check-error",
-                    "leftValue": "={{ $json.success }}",
+                    "id": "action-create",
+                    "leftValue": "={{ $json.data.action }}",
+                    "rightValue": "create",
                     "operator": {
-                      "type": "boolean",
-                      "operation": "false"
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "cancel",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "action-cancel",
+                    "leftValue": "={{ $json.data.action }}",
+                    "rightValue": "cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "reschedule",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "action-reschedule",
+                    "leftValue": "={{ $json.data.action }}",
+                    "rightValue": "reschedule",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
                     }
                   }
                 ],
@@ -75,121 +101,158 @@
           "fallbackOutput": "extra"
         }
       },
-      "id": "switch-guard",
-      "name": "Guard OK?",
+      "id": "route_action",
+      "name": "Route Action",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
         400,
-        400
+        300
       ]
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Transaction';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\ntry {\n  const raw = $input.first()?.json;\n  return ok(raw);\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "workflowId": {
+          "__rl": true,
+          "value": "Fz0t9SdpNqBs2O9D",
+          "mode": "id"
+        },
+        "inputData": "={{ $json.data }}"
       },
-      "id": "success",
-      "name": "Success",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "exec_create",
+      "name": "Exec Create",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        600,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "PGkoP5Ahu13SCrfj",
+          "mode": "id"
+        },
+        "inputData": "={{ $json.data }}"
+      },
+      "id": "exec_cancel",
+      "name": "Exec Cancel",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
       "position": [
         600,
         300
       ]
     },
     {
-      "parameters": {},
-      "id": "output",
-      "name": "Output",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        800,
-        350
-      ]
-    },
-    {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Transaction';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+        "workflowId": {
+          "__rl": true,
+          "value": "aelrguQqSHcUz7wn",
+          "mode": "id"
+        },
+        "inputData": "={{ $json.data }}"
       },
-      "id": "error-guard",
-      "name": "Error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "exec_reschedule",
+      "name": "Exec Reschedule",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
       "position": [
         600,
         500
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_Booking_Transaction';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'orchestrator', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const result = $input.first()?.json;\n  const action = $('Determine Action').item.json.data.action;\n  \n  if (result.success) {\n    return ok({\n      action: action,\n      result: result.data,\n      message: `Booking ${action}d successfully`\n    });\n  } else {\n    return [result];\n  }\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+      },
+      "id": "format_result",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
     }
   ],
   "connections": {
-    "\ud83e\uddea Test Webhook": {
-      "main": [
-        [
-          {
-            "node": "Guard",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Start": {
       "main": [
         [
           {
-            "node": "Guard",
+            "node": "Determine Action",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard": {
+    "Determine Action": {
       "main": [
         [
           {
-            "node": "Guard OK?",
+            "node": "Route Action",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Guard OK?": {
+    "Route Action": {
       "main": [
         [
           {
-            "node": "Error",
+            "node": "Exec Create",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Success",
+            "node": "Exec Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exec Reschedule",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Success": {
+    "Exec Create": {
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Format Result",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Error": {
+    "Exec Cancel": {
       "main": [
         [
           {
-            "node": "Output",
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Reschedule": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
             "type": "main",
             "index": 0
           }

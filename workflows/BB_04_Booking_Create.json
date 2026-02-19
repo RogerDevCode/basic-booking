@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Create';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\nconst parseToUTC = (input) => {\n  if (!input || typeof input !== 'string') return null;\n  const d = new Date(input);\n  if (isNaN(d.getTime())) return null;\n  return d;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.provider_id || !isValidUUID(raw.provider_id)) errors.push('provider_id must be valid UUID');\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be valid UUID');\n  \n  const startDT = parseToUTC(raw.start_time);\n  if (!startDT) {\n    errors.push('start_time must be valid ISO date');\n  } else {\n    const now = new Date();\n    const maxDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);\n    if (startDT < now) errors.push('start_time must be in the future');\n    if (startDT > maxDate) errors.push('start_time too far in the future (max 90 days)');\n  }\n\n  const endDT = parseToUTC(raw.end_time);\n  if (!endDT) {\n    errors.push('end_time must be valid ISO date');\n  } else if (startDT && endDT <= startDT) {\n    errors.push('end_time must be after start_time');\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok({\n    provider_id: raw.provider_id,\n    user_id: raw.user_id,\n    service_id: raw.service_id || null,\n    start_time: startDT.toISOString(),\n    end_time: endDT.toISOString()\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\nconst isValidUUID = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);\nconst sanitize = (str) => typeof str === 'string' ? str.replace(/[<>]/g, '') : str;\n\nconst parseToUTC = (input) => {\n  if (!input || typeof input !== 'string') return null;\n  const dt = DateTime.fromISO(input, { zone: 'UTC' });\n  if (!dt.isValid) return null;\n  return dt;\n};\n\ntry {\n  const items = $input.all();\n  if (!items?.length) return fail('VAL_NO_INPUT', 'No input received');\n\n  const raw = items[0].json.body || items[0].json;\n  const errors = [];\n\n  if (!raw.provider_id || !isValidUUID(raw.provider_id)) errors.push('provider_id must be valid UUID');\n  if (!raw.user_id || !isValidUUID(raw.user_id)) errors.push('user_id must be valid UUID');\n  \n  const startDT = parseToUTC(raw.start_time);\n  if (!startDT) {\n    errors.push('start_time must be valid ISO date');\n  } else {\n    const now = DateTime.now().setZone(TIMEZONE);\n    const maxDate = now.plus({ days: 90 });\n    if (startDT < now) errors.push('start_time must be in the future');\n    if (startDT > maxDate) errors.push('start_time too far in the future (max 90 days)');\n  }\n\n  const endDT = parseToUTC(raw.end_time);\n  if (!endDT) {\n    errors.push('end_time must be valid ISO date');\n  } else if (startDT && endDT <= startDT) {\n    errors.push('end_time must be after start_time');\n  }\n\n  if (errors.length > 0) return fail('VAL_INVALID_INPUT', errors.join('; '));\n\n  return ok({\n    provider_id: raw.provider_id,\n    user_id: raw.user_id,\n    service_id: raw.service_id || null,\n    start_time: startDT.toISO(),\n    end_time: endDT.toISO()\n  });\n} catch (e) {\n  return fail('INTERNAL_ERROR', WORKFLOW_ID + ': ' + e.message);\n}"
       },
       "id": "guard",
       "name": "Guard",
@@ -87,7 +87,19 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT EXISTS(SELECT 1 FROM providers WHERE id = '{{ $json.data.provider_id }}' AND deleted_at IS NULL) as provider_exists, EXISTS(SELECT 1 FROM users WHERE id = '{{ $json.data.user_id }}' AND deleted_at IS NULL) as user_exists"
+        "query": "SELECT EXISTS(SELECT 1 FROM providers WHERE id = $1::uuid AND deleted_at IS NULL) as provider_exists, EXISTS(SELECT 1 FROM users WHERE id = $2::uuid AND deleted_at IS NULL) as user_exists;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $json.data.provider_id }}"
+              },
+              {
+                "value": "={{ $json.data.user_id }}"
+              }
+            ]
+          }
+        }
       },
       "id": "validate_fks",
       "name": "Validate FKs",
@@ -107,7 +119,7 @@
     },
     {
       "parameters": {
-        "jsCode": "/**\n * Validate DB Result \u2014 FK Check\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst DB_CONTEXT = 'validate user and provider existence';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  \n  if (!res.provider_exists) return fail('BOOK_INVALID_PROVIDER', 'Provider not found or inactive');\n  if (!res.user_exists) return fail('BOOK_INVALID_USER', 'User not found or inactive');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} validate_fks: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n/**\n * Validate DB Result \u2014 FK Check\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst DB_CONTEXT = 'validate user and provider existence';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  \n  if (!res.provider_exists) return fail('BOOK_INVALID_PROVIDER', 'Provider not found or inactive');\n  if (!res.user_exists) return fail('BOOK_INVALID_USER', 'User not found or inactive');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} validate_fks: ${e.message}`);\n}"
       },
       "id": "validate_fks_result",
       "name": "Validate FK Result",
@@ -184,7 +196,7 @@
     },
     {
       "parameters": {
-        "jsCode": "/**\n * Validate DB Result \u2014 Advisory Lock\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst DB_CONTEXT = 'acquire slot lock';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  \n  if (!res.locked) return fail('BOOK_SLOT_LOCKED', 'Slot is being processed by another request');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} lock_slot: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n/**\n * Validate DB Result \u2014 Advisory Lock\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst DB_CONTEXT = 'acquire slot lock';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  \n  if (!res.locked) return fail('BOOK_SLOT_LOCKED', 'Slot is being processed by another request');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} lock_slot: ${e.message}`);\n}"
       },
       "id": "validate_lock_result",
       "name": "Validate Lock Result",
@@ -252,6 +264,95 @@
     },
     {
       "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('GCAL_ERROR', 'No response from Google Calendar');\n\n  const res = items[0].json;\n  \n  if (!res.id) return fail('BOOK_GCAL_FAILED', 'Failed to create Google Calendar event');\n\n  return ok({ gcal_event_id: res.id, htmlLink: res.htmlLink });\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} gcal_validate: ${e.message}`);\n}"
+      },
+      "id": "validate_gcal_result",
+      "name": "Validate GCal Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-gcal-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "route_gcal_success",
+      "name": "Route: GCal Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT release_booking_lock($1::uuid, $2::timestamptz) as released;",
+        "options": {
+          "queryParameters": {
+            "values": [
+              {
+                "value": "={{ $('Guard').item.json.data.provider_id }}"
+              },
+              {
+                "value": "={{ $('Guard').item.json.data.start_time }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "rollback_lock",
+      "name": "Rollback Lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2000,
+        400
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "99BnrzwZQDhYU6Ly"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nreturn [{ json: { success: false, error_code: 'BOOK_GCAL_FAILED', error_message: 'Google Calendar creation failed, lock released', data: { rollback: true }, _meta: meta() } }];"
+      },
+      "id": "gcal_failed",
+      "name": "GCal Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        400
+      ]
+    },
+    {
+      "parameters": {
         "schema": "public",
         "table": "bookings",
         "columns": {
@@ -263,11 +364,11 @@
             "start_time": "={{ $('Guard').item.json.data.start_time }}",
             "end_time": "={{ $('Guard').item.json.data.end_time }}",
             "status": "confirmed",
-            "gcal_event_id": "={{ $json.id }}"
+            "gcal_event_id": "={{ $json.data.gcal_event_id }}"
           }
         },
         "options": {
-          "returnFields": "id,start_time,end_time,status"
+          "returnFields": "id,start_time,end_time,status,gcal_event_id"
         }
       },
       "id": "db_insert",
@@ -275,8 +376,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1800,
-        200
+        2200,
+        100
       ],
       "alwaysOutputData": true,
       "onError": "continueRegularOutput",
@@ -288,15 +389,15 @@
     },
     {
       "parameters": {
-        "jsCode": "/**\n * Validate DB Result \u2014 Insert Booking\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst DB_CONTEXT = 'insert booking into database';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  \n  if (!res.id) return fail('BOOK_INSERT_FAILED', 'Failed to save booking record');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} db_insert: ${e.message}`);\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n/**\n * Validate DB Result - Insert Booking\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst DB_CONTEXT = 'insert booking into database';\n\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst fail = (code, msg) => [{ json: { success: false, error_code: code, error_message: msg, data: null, _meta: meta() } }];\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const items = $input.all();\n  if (!items || items.length === 0) return fail('DB_ERROR', `${DB_CONTEXT}: no response from database`);\n\n  const res = items[0].json;\n  \n  if (!res.id) return fail('BOOK_INSERT_FAILED', 'Failed to save booking record');\n\n  return ok(res);\n} catch (e) {\n  return fail('INTERNAL_ERROR', `${WORKFLOW_ID} db_insert: ${e.message}`);\n}"
       },
       "id": "validate_insert_result",
       "name": "Validate Insert Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2000,
-        200
+        2400,
+        100
       ]
     },
     {
@@ -326,26 +427,26 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2200,
-        200
+        2600,
+        100
       ]
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Create';\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const result = $input.first()?.json.data;\n  return ok({ booking_id: result.id, start_time: result.start_time, end_time: result.end_time, action: 'created' });\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nconst ok = (data) => [{ json: { success: true, error_code: null, error_message: null, data, _meta: meta() } }];\n\ntry {\n  const result = $input.first()?.json.data;\n  return ok({ booking_id: result.id, start_time: result.start_time, end_time: result.end_time, gcal_event_id: result.gcal_event_id, action: 'created' });\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID}: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "success",
       "name": "Success",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2400,
-        100
+        2800,
+        0
       ]
     },
     {
       "parameters": {
-        "jsCode": "const WORKFLOW_ID = 'BB_04_Booking_Create';\nconst meta = () => ({ source: 'webhook', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n// Pass through the error from Guard (already formatted correctly)\nreturn $input.all();"
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'webhook', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\nreturn $input.all();"
       },
       "id": "error-guard",
       "name": "Error",
@@ -358,15 +459,15 @@
     },
     {
       "parameters": {
-        "jsCode": "/**\n * Format Output\n * v1.0\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst meta = () => ({ source: 'subworkflow', timestamp: new Date().toISOString(), workflow_id: WORKFLOW_ID });\n\ntry {\n  const input = $input.all();\n  if (!input || input.length === 0) {\n    return [{ json: { success: false, error_code: 'SYS_NO_OUTPUT', error_message: `${WORKFLOW_ID}: format output received no input`, data: null, _meta: meta() } }];\n  }\n\n  const incoming = input[0].json;\n\n  if ('success' in incoming && '_meta' in incoming) {\n    return [{ json: { ...incoming, _meta: { ...incoming._meta, timestamp: new Date().toISOString(), formatted_by: WORKFLOW_ID } } }];\n  }\n\n  return [{ json: { success: true, error_code: null, error_message: null, data: incoming, _meta: meta() } }];\n\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID} format: ${e.message}`, data: null, _meta: meta() } }];\n}"
+        "jsCode": "const { DateTime } = require('luxon');\n/**\n * Format Output\n * v1.0\n */\nconst WORKFLOW_ID = 'BB_04_Booking_Create';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'subworkflow', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\ntry {\n  const input = $input.all();\n  if (!input || input.length === 0) {\n    return [{ json: { success: false, error_code: 'SYS_NO_OUTPUT', error_message: `${WORKFLOW_ID}: format output received no input`, data: null, _meta: meta() } }];\n  }\n\n  const incoming = input[0].json;\n\n  if ('success' in incoming && '_meta' in incoming) {\n    return [{ json: { ...incoming, _meta: { ...incoming._meta, timestamp: DateTime.now().setZone(TIMEZONE).toISO(), formatted_by: WORKFLOW_ID } } }];\n  }\n\n  return [{ json: { success: true, error_code: null, error_message: null, data: incoming, _meta: meta() } }];\n\n} catch (e) {\n  return [{ json: { success: false, error_code: 'INTERNAL_ERROR', error_message: `${WORKFLOW_ID} format: ${e.message}`, data: null, _meta: meta() } }];\n}"
       },
       "id": "format_output",
       "name": "Format Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2600,
-        400
+        3000,
+        300
       ]
     }
   ],
@@ -517,7 +618,58 @@
       "main": [
         [
           {
+            "node": "Validate GCal Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate GCal Result": {
+      "main": [
+        [
+          {
+            "node": "Route: GCal Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: GCal Success?": {
+      "main": [
+        [
+          {
             "node": "DB Insert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rollback Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rollback Lock": {
+      "main": [
+        [
+          {
+            "node": "GCal Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GCal Failed": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }

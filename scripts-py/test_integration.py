@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 """
 FASE 2: Integration Testing
 Tests for orchestrator workflows that call subworkflows.
@@ -9,7 +10,7 @@ import requests
 import sys
 from datetime import datetime, date
 
-BASE_URL = "http://localhost:5678"
+BASE_URL = os.getenv("N8N_API_URL", "http://localhost:5678")
 
 class IntegrationTester:
     def __init__(self):

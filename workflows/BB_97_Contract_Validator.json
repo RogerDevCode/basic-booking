@@ -1,0 +1,48 @@
+{
+  "name": "BB_97_Contract_Validator",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_97_Contract_Validator';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'contract_validator', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\nconst REQUIRED_FIELDS = ['success', 'error_code', 'error_message', 'data', '_meta'];\nconst META_FIELDS = ['source', 'timestamp', 'workflow_id', 'version'];\n\nconst validateContract = (output) => {\n  const errors = [];\n  const warnings = [];\n  \n  // Check required fields\n  for (const field of REQUIRED_FIELDS) {\n    if (!(field in output)) {\n      errors.push(`Missing required field: ${field}`);\n    }\n  }\n  \n  // Check types\n  if ('success' in output && typeof output.success !== 'boolean') {\n    errors.push('Field \"success\" must be boolean');\n  }\n  \n  if ('error_code' in output && output.error_code !== null && typeof output.error_code !== 'string') {\n    errors.push('Field \"error_code\" must be string or null');\n  }\n  \n  if ('error_message' in output && output.error_message !== null && typeof output.error_message !== 'string') {\n    errors.push('Field \"error_message\" must be string or null');\n  }\n  \n  // Check _meta structure\n  if (output._meta) {\n    for (const field of META_FIELDS) {\n      if (!(field in output._meta)) {\n        warnings.push(`_meta missing recommended field: ${field}`);\n      }\n    }\n  }\n  \n  // Check consistency\n  if (output.success === true) {\n    if (output.error_code !== null) {\n      warnings.push('success=true but error_code is not null');\n    }\n    if (output.error_message !== null) {\n      warnings.push('success=true but error_message is not null');\n    }\n  }\n  \n  if (output.success === false) {\n    if (!output.error_code) {\n      errors.push('success=false but error_code is missing');\n    }\n    if (!output.error_message) {\n      warnings.push('success=false but error_message is missing');\n    }\n  }\n  \n  return { errors, warnings, valid: errors.length === 0 };\n};\n\ntry {\n  const items = $input.all();\n  const results = [];\n  \n  for (const item of items) {\n    const output = item.json;\n    const validation = validateContract(output);\n    \n    results.push({\n      json: {\n        valid: validation.valid,\n        errors: validation.errors,\n        warnings: validation.warnings,\n        input_summary: {\n          success: output.success,\n          error_code: output.error_code,\n          has_data: output.data !== null,\n          has_meta: !!output._meta\n        },\n        _meta: meta()\n      }\n    });\n  }\n  \n  return results;\n} catch (e) {\n  return [{\n    json: {\n      valid: false,\n      errors: [`Validator error: ${e.message}`],\n      warnings: [],\n      _meta: meta()\n    }\n  }];\n}"
+      },
+      "id": "validate",
+      "name": "Validate Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Validate Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "name": "BB_98_Test_Runner",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_98_Test_Runner';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'test_runner', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\nconst TEST_SUITES = [\n  { name: 'Telegram Gateway - Valid Webhook', workflow_id: 'SYi1KHfmeSUL6gJM', fixture: 'telegram_webhook_valid.json', expect: { success: true } },\n  { name: 'Security Firewall - Valid ID', workflow_id: 'RFgFNM0HqcSaWkma', fixture: 'security_check_valid.json', expect: { success: true, 'data.access': 'granted' } },\n  { name: 'Notification Engine - No Pending', workflow_id: '25dSqiEaP1y0s0vA', fixture: 'empty.json', expect: { success: false, error_code: 'NOTIF_NO_PENDING' } },\n  { name: 'Circuit Breaker - Check', workflow_id: '2z2x94yvQ3x34bUG', fixture: 'circuit_check.json', expect: { success: true, 'data.state': 'CLOSED' } }\n];\nreturn TEST_SUITES.map(suite => ({ json: { ...suite, _meta: meta() } }));"
+      },
+      "id": "load_suites",
+      "name": "Load Test Suites",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst fs = require('fs');\nconst path = require('path');\n\nconst test = $input.first().json;\nconst fixturesDir = '/home/manager/Sync/N8N Projects/basic-booking/tests/fixtures';\n\ntry {\n  let fixtureData = {};\n  const fixturePath = path.join(fixturesDir, test.fixture);\n  \n  try {\n    const content = fs.readFileSync(fixturePath, 'utf8');\n    fixtureData = JSON.parse(content);\n  } catch (e) {\n    fixtureData = { test: test.name };\n  }\n  \n  return [{\n    json: {\n      test_name: test.name,\n      workflow_id: test.workflow_id,\n      expect: test.expect,\n      fixture: fixtureData,\n      started_at: DateTime.now().setZone('UTC').toISO()\n    }\n  }];\n} catch (e) {\n  return [{ json: { error: e.message, test_name: test.name } }];\n}"
+      },
+      "id": "load_fixture",
+      "name": "Load Fixture",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $json.workflow_id }}",
+          "mode": "id"
+        },
+        "inputData": "={{ $json.fixture }}"
+      },
+      "id": "run_workflow",
+      "name": "Run Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\n\nconst testInfo = $('Load Fixture').first().json;\nconst result = $input.first()?.json || {};\nconst expects = testInfo.expect;\n\nconst assertions = [];\nlet allPassed = true;\n\n// Check each expected value\nfor (const [key, expectedValue] of Object.entries(expects)) {\n  // Support nested keys like 'data.access'\n  const getNestedValue = (obj, path) => {\n    return path.split('.').reduce((acc, part) => acc && acc[part], obj);\n  };\n  \n  const actualValue = getNestedValue(result, key);\n  const passed = actualValue === expectedValue;\n  \n  if (!passed) allPassed = false;\n  \n  assertions.push({\n    key,\n    expected: expectedValue,\n    actual: actualValue,\n    passed\n  });\n}\n\nreturn [{\n  json: {\n    test_name: testInfo.test_name,\n    workflow: testInfo.workflow_id,\n    passed: allPassed,\n    assertions,\n    result: {\n      success: result.success,\n      error_code: result.error_code,\n      has_data: !!result.data\n    },\n    started_at: testInfo.started_at,\n    completed_at: DateTime.now().setZone('UTC').toISO()\n  }\n}];"
+      },
+      "id": "assert_results",
+      "name": "Assert Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst aggregated = {\n  test_name: items.map(i => i.json.test_name),\n  workflow: items.map(i => i.json.workflow),\n  passed: items.map(i => i.json.passed),\n  assertions: items.map(i => i.json.assertions),\n  started_at: items.map(i => i.json.started_at),\n  completed_at: items.map(i => i.json.completed_at)\n};\nreturn [{ json: aggregated }];"
+      },
+      "id": "aggregate_all",
+      "name": "Aggregate All",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { DateTime } = require('luxon');\nconst WORKFLOW_ID = 'BB_98_Test_Runner';\nconst VERSION = 'v1.0';\nconst TIMEZONE = $vars.TIMEZONE || 'UTC';\nconst meta = () => ({ source: 'test_runner', timestamp: DateTime.now().setZone(TIMEZONE).toISO(), workflow_id: WORKFLOW_ID, version: VERSION });\n\nconst results = $input.first().json;\n\nconst total = results.test_name?.length || 0;\nconst passed = results.passed?.filter(p => p === true)?.length || 0;\nconst failed = total - passed;\n\nconst summary = {\n  total_tests: total,\n  passed,\n  failed,\n  pass_rate: total > 0 ? Math.round((passed / total) * 100) + '%' : '0%',\n  tests: results.test_name?.map((name, i) => ({\n    name,\n    workflow: results.workflow?.[i],\n    passed: results.passed?.[i],\n    assertions: results.assertions?.[i],\n    started_at: results.started_at?.[i],\n    completed_at: results.completed_at?.[i]\n  })) || [],\n  run_at: DateTime.now().setZone(TIMEZONE).toISO(),\n  _meta: meta()\n};\n\n// Add status based on results\nsummary.success = failed === 0;\n\nreturn [{ json: summary }];"
+      },
+      "id": "format_summary",
+      "name": "Format Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Load Test Suites",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Test Suites": {
+      "main": [
+        [
+          {
+            "node": "Load Fixture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Fixture": {
+      "main": [
+        [
+          {
+            "node": "Run Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Workflow": {
+      "main": [
+        [
+          {
+            "node": "Assert Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assert Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All": {
+      "main": [
+        [
+          {
+            "node": "Format Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}
